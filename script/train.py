@@ -11,6 +11,7 @@ import warnings
 import argparse
 import sys
 import os
+from sklearn.model_selection import KFold
 warnings.filterwarnings('ignore')
 
 # evaluation.py import를 위한 경로 추가
@@ -255,6 +256,133 @@ def predict(pivot, pairs, reg, feature_cols, predict_month_idx=None):
     return df_pred
 
 
+def cross_validate_with_kfold(pivot, pairs, feature_cols, is_validate_mode=False, 
+                               answer_df=None, n_splits=5):
+    """
+    KFold 교차 검증을 수행하고 모든 fold의 예측을 앙상블하는 함수
+    
+    Args:
+        pivot: 피벗 테이블
+        pairs: 공행성 쌍 데이터프레임
+        feature_cols: feature 컬럼 리스트
+        is_validate_mode: 검증 모드 여부
+        answer_df: 검증 모드일 때 정답 데이터프레임 (None이면 평가 안 함)
+        n_splits: KFold 분할 수 (기본값: 5)
+    
+    Returns:
+        final_submission: 모든 fold의 예측을 앙상블한 최종 예측 결과
+        fold_scores: 각 fold의 점수 리스트 (validate 모드인 경우)
+    """
+    # 학습 데이터 생성
+    print("\n[KFold] 학습 데이터 생성 중...")
+    df_train_model = build_training_data(pivot, pairs)
+    print(f'생성된 학습 데이터 shape: {df_train_model.shape}')
+    
+    if len(df_train_model) == 0:
+        print("경고: 학습 데이터가 없습니다.")
+        return pd.DataFrame(columns=["leading_item_id", "following_item_id", "value"]), []
+    
+    train_X = df_train_model[feature_cols].values
+    train_y = df_train_model["target"].values
+    
+    # KFold 생성
+    kfold = KFold(n_splits=n_splits, shuffle=True, random_state=42)
+    
+    # 모든 fold의 예측 결과를 저장할 딕셔너리
+    all_predictions = {}  # {(leading_item_id, following_item_id): [pred1, pred2, ...]}
+    fold_scores = []
+    
+    print(f"\n[KFold] {n_splits}-Fold 교차 검증 시작...")
+    
+    for fold_idx, (train_idx, val_idx) in enumerate(kfold.split(train_X), 1):
+        print(f"\n--- Fold {fold_idx}/{n_splits} ---")
+        
+        # 학습/검증 데이터 분할
+        X_train_fold = train_X[train_idx]
+        y_train_fold = train_y[train_idx]
+        X_val_fold = train_X[val_idx]
+        y_val_fold = train_y[val_idx]
+        
+        print(f"  학습 샘플 수: {len(X_train_fold)}, 검증 샘플 수: {len(X_val_fold)}")
+        
+        # 모델 학습
+        reg = xgb.XGBRegressor(
+            n_estimators=200,
+            max_depth=6,
+            learning_rate=0.1,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            random_state=42,
+            n_jobs=-1,
+            verbosity=0
+        )
+        reg.fit(X_train_fold, y_train_fold)
+        
+        # 전체 pairs에 대해 예측 (실제 제출 형식)
+        # 각 fold에서 학습된 모델로 모든 공행성 쌍에 대해 예측
+        fold_submission = predict(pivot, pairs, reg, feature_cols)
+        
+        # 예측 결과를 딕셔너리에 누적
+        for _, pred_row in fold_submission.iterrows():
+            pair_key = (pred_row['leading_item_id'], pred_row['following_item_id'])
+            if pair_key not in all_predictions:
+                all_predictions[pair_key] = []
+            all_predictions[pair_key].append(pred_row['value'])
+        
+        # validate 모드인 경우 이 fold의 점수 계산
+        if is_validate_mode and answer_df is not None:
+            try:
+                score = comovement_score(answer_df, fold_submission)
+                f1 = comovement_f1(answer_df, fold_submission)
+                nmae = comovement_nmae(answer_df, fold_submission)
+                
+                fold_scores.append({
+                    'fold': fold_idx,
+                    'f1': f1,
+                    'nmae': nmae,
+                    'score': score
+                })
+                
+                print(f"  Fold {fold_idx} 점수: F1={f1:.6f}, NMAE={nmae:.6f}, Score={score:.6f}")
+            except Exception as e:
+                print(f"  Fold {fold_idx} 평가 중 오류: {e}")
+    
+    # 모든 fold의 예측을 평균하여 최종 예측 생성
+    print("\n[KFold] 모든 fold의 예측을 앙상블 중...")
+    final_rows = []
+    for pair_key, predictions in all_predictions.items():
+        # 평균 계산
+        avg_pred = np.mean(predictions)
+        # 후처리: 음수는 0으로, 소수점은 정수로 반올림
+        avg_pred = max(0.0, float(avg_pred))
+        avg_pred = int(round(avg_pred))
+        
+        final_rows.append({
+            'leading_item_id': pair_key[0],
+            'following_item_id': pair_key[1],
+            'value': avg_pred
+        })
+    
+    final_submission = pd.DataFrame(final_rows)
+    
+    # validate 모드인 경우 평균 점수 출력
+    if is_validate_mode and len(fold_scores) > 0:
+        avg_f1 = np.mean([s['f1'] for s in fold_scores])
+        avg_nmae = np.mean([s['nmae'] for s in fold_scores])
+        avg_score = np.mean([s['score'] for s in fold_scores])
+        
+        print("\n" + "=" * 60)
+        print("KFold 교차 검증 결과 (평균)")
+        print("=" * 60)
+        print(f"평균 F1 Score: {avg_f1:.6f}")
+        print(f"평균 NMAE: {avg_nmae:.6f}")
+        print(f"평균 Final Score: {avg_score:.6f}")
+        print(f"  (Score = 0.6 × F1 + 0.4 × (1 - NMAE))")
+        print("=" * 60)
+    
+    return final_submission, fold_scores
+
+
 def main():
     """메인 실행 함수"""
     # 명령줄 인자 파싱
@@ -348,45 +476,14 @@ def main():
         print("경고: 공행성 쌍이 발견되지 않았습니다.")
         return
 
-    # 4. 학습 데이터 생성 (학습 데이터만 사용)
-    print("\n[4단계] 학습 데이터 생성 중...")
-    if is_validate_mode:
-        # 검증 모드: 학습 기간의 마지막 전까지만 사용 (검증 데이터 절대 사용 안 함)
-        df_train_model = build_training_data(pivot_train, pairs, end_month_idx=len(pivot_train.columns))
-    else:
-        df_train_model = build_training_data(pivot_train, pairs)
-    print(f'생성된 학습 데이터 shape: {df_train_model.shape}')
-
-    # 5. 회귀 모델 학습
-    print("\n[5단계] 회귀 모델 학습 중...")
+    # 4. Feature 컬럼 정의
     feature_cols = ['b_t', 'b_t_1', 'a_t_lag', 'max_corr', 'best_lag', 
                     'b_trend', 'a_trend', 'b_ma3', 'b_change']
 
-    train_X = df_train_model[feature_cols].values
-    train_y = df_train_model["target"].values
-
-    # XGBoost 회귀 모델 사용 (성능 향상)
-    print("XGBoost 회귀 모델 학습 중...")
-    reg = xgb.XGBRegressor(
-        n_estimators=200,
-        max_depth=6,
-        learning_rate=0.1,
-        subsample=0.8,
-        colsample_bytree=0.8,
-        random_state=42,
-        n_jobs=-1,
-        verbosity=0
-    )
-    reg.fit(train_X, train_y)
-    print("모델 학습 완료")
-
-    # 6. 예측
-    print("\n[6단계] 예측 수행 중...")
+    # 5. KFold 교차 검증 수행
+    print("\n[5단계] KFold 교차 검증 수행 중...")
+    
     if is_validate_mode:
-        # 검증 모드: 검증 기간의 첫 번째 달 예측
-        # 예측 시에는 전체 pivot을 사용하되, predict_month_idx를 지정
-        submission = predict(pivot, pairs, reg, feature_cols, predict_month_idx=predict_month_idx)
-        
         # 검증용 정답 데이터 생성
         # 정답 공행성 쌍(answer_pairs)에 대해서만 정답 생성
         # 검증 기간의 첫 번째 달(predict_month_idx)의 실제 무역량을 정답으로 사용
@@ -403,9 +500,15 @@ def main():
                 })
         
         answer_df = pd.DataFrame(answer_rows)
-        
-        print(f"예측된 쌍 수: {len(submission)}")
         print(f"정답 쌍 수: {len(answer_df)}")
+        
+        # KFold 교차 검증 수행 (학습 데이터만 사용)
+        submission, fold_scores = cross_validate_with_kfold(
+            pivot_train, pairs, feature_cols, 
+            is_validate_mode=True, answer_df=answer_df, n_splits=5
+        )
+        
+        print(f"\n예측된 쌍 수: {len(submission)}")
         
         # 예측 쌍과 정답 쌍의 교집합 확인
         pred_pairs = set(zip(submission['leading_item_id'], submission['following_item_id']))
@@ -413,8 +516,8 @@ def main():
         intersection = pred_pairs & ans_pairs
         print(f"일치하는 쌍 수: {len(intersection)}")
         
-        # 7. 평가
-        print("\n[7단계] 평가 수행 중...")
+        # 최종 앙상블 결과 평가
+        print("\n[6단계] 최종 앙상블 결과 평가 중...")
         if len(answer_df) > 0 and len(submission) > 0:
             try:
                 score = comovement_score(answer_df, submission)
@@ -431,7 +534,7 @@ def main():
                 recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
                 
                 print("\n" + "=" * 60)
-                print("검증 결과")
+                print("최종 앙상블 검증 결과")
                 print("=" * 60)
                 print(f"공행성 쌍 판별:")
                 print(f"  Precision: {precision:.6f}")
@@ -443,7 +546,6 @@ def main():
                 print(f"\n최종 점수:")
                 print(f"  Final Score: {score:.6f}")
                 print(f"  (Score = 0.6 × F1 + 0.4 × (1 - NMAE))")
-                print(f"\n참고: 리더보드 점수 = 0.36234")
                 print("=" * 60)
             except Exception as e:
                 print(f"평가 중 오류 발생: {e}")
@@ -457,12 +559,15 @@ def main():
             if len(submission) == 0:
                 print("  - 예측 데이터가 생성되지 않았습니다.")
     else:
-        # 제출 모드: 전체 데이터로 예측
-        submission = predict(pivot, pairs, reg, feature_cols)
-        print(f"예측된 쌍 수: {len(submission)}")
+        # 제출 모드: 전체 데이터로 KFold 교차 검증 수행
+        submission, _ = cross_validate_with_kfold(
+            pivot_train, pairs, feature_cols, 
+            is_validate_mode=False, answer_df=None, n_splits=5
+        )
+        print(f"\n예측된 쌍 수: {len(submission)}")
 
-        # 7. 제출 파일 저장
-        print("\n[7단계] 제출 파일 저장 중...")
+        # 6. 제출 파일 저장
+        print("\n[6단계] 제출 파일 저장 중...")
         output_path = '../data/submission.csv'
         submission.to_csv(output_path, index=False)
         print(f"제출 파일 저장 완료: {output_path}")
