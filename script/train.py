@@ -8,7 +8,14 @@ import numpy as np
 import xgboost as xgb
 from tqdm import tqdm
 import warnings
+import argparse
+import sys
+import os
 warnings.filterwarnings('ignore')
+
+# evaluation.py import를 위한 경로 추가
+sys.path.append(os.path.join(os.path.dirname(__file__), '../document'))
+from evaluation import comovement_score, comovement_f1, comovement_nmae
 
 
 def safe_corr(x, y):
@@ -70,7 +77,7 @@ def find_comovement_pairs(pivot, max_lag=6, min_nonzero=12, corr_threshold=0.35)
     return pairs
 
 
-def build_training_data(pivot, pairs):
+def build_training_data(pivot, pairs, end_month_idx=None):
     """
     공행성쌍 + 시계열을 이용해 (X, y) 학습 데이터를 만드는 함수
     향상된 feature engineering:
@@ -80,9 +87,18 @@ def build_training_data(pivot, pairs):
     - b_trend: 후행 품목의 추세 (최근 3개월 평균)
     - a_trend: 선행 품목의 추세 (최근 3개월 평균)
     - b_ma3: 후행 품목의 3개월 이동평균
+    
+    Args:
+        pivot: 피벗 테이블
+        pairs: 공행성 쌍 데이터프레임
+        end_month_idx: 사용할 마지막 월 인덱스 (None이면 전체 사용, 검증 모드에서 사용)
     """
     months = pivot.columns.to_list()
     n_months = len(months)
+    
+    # end_month_idx가 지정되면 그 이전까지만 사용 (검증 모드)
+    if end_month_idx is not None:
+        n_months = min(n_months, end_month_idx)
 
     rows = []
 
@@ -143,17 +159,31 @@ def build_training_data(pivot, pairs):
     return df_train
 
 
-def predict(pivot, pairs, reg, feature_cols):
+def predict(pivot, pairs, reg, feature_cols, predict_month_idx=None):
     """
     회귀 모델 추론 및 제출 파일 생성
-    탐색된 공행성 쌍에 대해 후행 품목의 2025년 8월 총 무역량 예측
+    탐색된 공행성 쌍에 대해 후행 품목의 다음 달 총 무역량 예측
+    
+    Args:
+        pivot: 피벗 테이블
+        pairs: 공행성 쌍 데이터프레임
+        reg: 학습된 회귀 모델
+        feature_cols: feature 컬럼 리스트
+        predict_month_idx: 예측할 월의 인덱스 (None이면 마지막 달 다음 달 예측, 검증 모드에서 사용)
     """
     months = pivot.columns.to_list()
     n_months = len(months)
-
-    # 가장 마지막 두 달 index (2025-7, 2025-6)
-    t_last = n_months - 1
-    t_prev = n_months - 2
+    
+    # predict_month_idx가 지정되면 해당 월을 예측 (검증 모드)
+    if predict_month_idx is not None:
+        t_last = predict_month_idx - 1  # 예측할 달의 이전 달
+        if t_last < 0:
+            return pd.DataFrame(columns=["leading_item_id", "following_item_id", "value"])
+    else:
+        # 가장 마지막 두 달 index (2025-7, 2025-6)
+        t_last = n_months - 1
+    
+    t_prev = t_last - 1
 
     preds = []
 
@@ -227,8 +257,19 @@ def predict(pivot, pairs, reg, feature_cols):
 
 def main():
     """메인 실행 함수"""
+    # 명령줄 인자 파싱
+    parser = argparse.ArgumentParser(description='국민대학교 AI빅데이터 분석 경진대회 - 학습 및 예측')
+    parser.add_argument('--mode', type=str, default='submit', choices=['submit', 'validate'],
+                        help='실행 모드: submit(전체 학습 및 제출 파일 생성, 기본값) 또는 validate(검증 모드)')
+    args = parser.parse_args()
+    
+    is_validate_mode = (args.mode == 'validate')
+    
     print("=" * 60)
-    print("국민대학교 AI빅데이터 분석 경진대회 - 학습 및 예측")
+    if is_validate_mode:
+        print("국민대학교 AI빅데이터 분석 경진대회 - 검증 모드")
+    else:
+        print("국민대학교 AI빅데이터 분석 경진대회 - 학습 및 예측")
     print("=" * 60)
 
     # 1. 데이터 로드
@@ -257,19 +298,63 @@ def main():
         .fillna(0.0)
     )
     print(f"피벗 테이블 shape: {pivot.shape}")
+    
+    months = pivot.columns.to_list()
+    n_months = len(months)
+    
+    # 검증 모드일 때 데이터 분할 (9:1)
+    if is_validate_mode:
+        # 시계열 데이터이므로 시간 순서대로 분할 (마지막 10%를 검증 데이터로)
+        split_idx = int(n_months * 0.9)
+        train_months = months[:split_idx]
+        val_months = months[split_idx:]
+        
+        print(f"\n[검증 모드] 데이터 분할:")
+        print(f"  학습 기간: {train_months[0]} ~ {train_months[-1]} ({len(train_months)}개월)")
+        print(f"  검증 기간: {val_months[0]} ~ {val_months[-1]} ({len(val_months)}개월)")
+        
+        # 학습용 피벗 테이블 (검증 기간 제외)
+        pivot_train = pivot[train_months].copy()
+        
+        # 검증 기간 전체를 포함한 피벗 테이블 (정답 공행성 쌍 탐색용)
+        # 검증 기간의 마지막 달까지 포함하여 공행성 쌍을 탐색
+        # 이렇게 하면 검증 기간의 데이터도 활용하여 더 정확한 공행성 쌍을 찾을 수 있음
+        pivot_for_answer = pivot[months[:split_idx + len(val_months)]].copy()
+        
+        # 검증 기간의 첫 번째 달이 예측 대상
+        predict_month_idx = split_idx  # 검증 기간의 첫 번째 달 인덱스
+    else:
+        pivot_train = pivot.copy()
+        pivot_for_answer = None
+        predict_month_idx = None
 
     # 3. 공행성쌍 탐색
     print("\n[3단계] 공행성 쌍 탐색 중...")
-    pairs = find_comovement_pairs(pivot, max_lag=6, min_nonzero=12, corr_threshold=0.35)
-    print(f"탐색된 공행성쌍 수: {len(pairs)}")
+    if is_validate_mode:
+        # 검증 모드: 학습 데이터로 예측할 공행성 쌍 탐색
+        pairs = find_comovement_pairs(pivot_train, max_lag=6, min_nonzero=12, corr_threshold=0.35)
+        print(f"학습 데이터로 탐색된 공행성쌍 수: {len(pairs)}")
+        
+        # 정답 공행성 쌍 탐색 (검증 기간 전체 포함)
+        # 실제 대회에서는 정답 공행성 쌍이 미리 정해져 있지만,
+        # 검증 모드에서는 검증 기간 전체 데이터를 사용하여 더 정확한 공행성 쌍을 찾음
+        answer_pairs = find_comovement_pairs(pivot_for_answer, max_lag=6, min_nonzero=12, corr_threshold=0.35)
+        print(f"정답 공행성쌍 수 (검증 기간 포함): {len(answer_pairs)}")
+    else:
+        pairs = find_comovement_pairs(pivot_train, max_lag=6, min_nonzero=12, corr_threshold=0.35)
+        print(f"탐색된 공행성쌍 수: {len(pairs)}")
 
     if len(pairs) == 0:
         print("경고: 공행성 쌍이 발견되지 않았습니다.")
         return
 
-    # 4. 학습 데이터 생성
+    # 4. 학습 데이터 생성 (학습 데이터만 사용)
     print("\n[4단계] 학습 데이터 생성 중...")
-    df_train_model = build_training_data(pivot, pairs)
+    if is_validate_mode:
+        # 검증 모드: 학습 기간의 마지막 전까지만 사용 (검증 데이터 절대 사용 안 함)
+        df_train_model = build_training_data(pivot_train, pairs, end_month_idx=len(pivot_train.columns))
+    else:
+        df_train_model = build_training_data(pivot_train, pairs)
     print(f'생성된 학습 데이터 shape: {df_train_model.shape}')
 
     # 5. 회귀 모델 학습
@@ -295,19 +380,95 @@ def main():
     reg.fit(train_X, train_y)
     print("모델 학습 완료")
 
-    # 6. 예측 및 제출 파일 생성
+    # 6. 예측
     print("\n[6단계] 예측 수행 중...")
-    submission = predict(pivot, pairs, reg, feature_cols)
-    print(f"예측된 쌍 수: {len(submission)}")
+    if is_validate_mode:
+        # 검증 모드: 검증 기간의 첫 번째 달 예측
+        # 예측 시에는 전체 pivot을 사용하되, predict_month_idx를 지정
+        submission = predict(pivot, pairs, reg, feature_cols, predict_month_idx=predict_month_idx)
+        
+        # 검증용 정답 데이터 생성
+        # 정답 공행성 쌍(answer_pairs)에 대해서만 정답 생성
+        # 검증 기간의 첫 번째 달(predict_month_idx)의 실제 무역량을 정답으로 사용
+        answer_rows = []
+        for _, row in answer_pairs.iterrows():
+            following_item_id = row['following_item_id']
+            if following_item_id in pivot.index and predict_month_idx < n_months:
+                # 실제 검증 기간의 첫 번째 달 무역량
+                actual_value = pivot.loc[following_item_id, months[predict_month_idx]]
+                answer_rows.append({
+                    'leading_item_id': row['leading_item_id'],
+                    'following_item_id': following_item_id,
+                    'value': int(round(float(actual_value)))  # 정수로 변환
+                })
+        
+        answer_df = pd.DataFrame(answer_rows)
+        
+        print(f"예측된 쌍 수: {len(submission)}")
+        print(f"정답 쌍 수: {len(answer_df)}")
+        
+        # 예측 쌍과 정답 쌍의 교집합 확인
+        pred_pairs = set(zip(submission['leading_item_id'], submission['following_item_id']))
+        ans_pairs = set(zip(answer_df['leading_item_id'], answer_df['following_item_id']))
+        intersection = pred_pairs & ans_pairs
+        print(f"일치하는 쌍 수: {len(intersection)}")
+        
+        # 7. 평가
+        print("\n[7단계] 평가 수행 중...")
+        if len(answer_df) > 0 and len(submission) > 0:
+            try:
+                score = comovement_score(answer_df, submission)
+                f1 = comovement_f1(answer_df, submission)
+                nmae = comovement_nmae(answer_df, submission)
+                
+                # 상세 분석
+                pred_pairs = set(zip(submission['leading_item_id'], submission['following_item_id']))
+                ans_pairs = set(zip(answer_df['leading_item_id'], answer_df['following_item_id']))
+                tp = len(pred_pairs & ans_pairs)
+                fp = len(pred_pairs - ans_pairs)
+                fn = len(ans_pairs - pred_pairs)
+                precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+                recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+                
+                print("\n" + "=" * 60)
+                print("검증 결과")
+                print("=" * 60)
+                print(f"공행성 쌍 판별:")
+                print(f"  Precision: {precision:.6f}")
+                print(f"  Recall: {recall:.6f}")
+                print(f"  F1 Score: {f1:.6f}")
+                print(f"  TP: {tp}, FP: {fp}, FN: {fn}")
+                print(f"\n무역량 예측:")
+                print(f"  NMAE: {nmae:.6f}")
+                print(f"\n최종 점수:")
+                print(f"  Final Score: {score:.6f}")
+                print(f"  (Score = 0.6 × F1 + 0.4 × (1 - NMAE))")
+                print(f"\n참고: 리더보드 점수 = 0.36234")
+                print("=" * 60)
+            except Exception as e:
+                print(f"평가 중 오류 발생: {e}")
+                import traceback
+                traceback.print_exc()
+                print("예측 결과와 정답 데이터를 확인해주세요.")
+        else:
+            print("경고: 평가할 데이터가 없습니다.")
+            if len(answer_df) == 0:
+                print("  - 정답 데이터가 생성되지 않았습니다.")
+            if len(submission) == 0:
+                print("  - 예측 데이터가 생성되지 않았습니다.")
+    else:
+        # 제출 모드: 전체 데이터로 예측
+        submission = predict(pivot, pairs, reg, feature_cols)
+        print(f"예측된 쌍 수: {len(submission)}")
 
-    # 7. 제출 파일 저장
-    print("\n[7단계] 제출 파일 저장 중...")
-    output_path = '../data/submission.csv'
-    submission.to_csv(output_path, index=False)
-    print(f"제출 파일 저장 완료: {output_path}")
-    print(f"\n제출 파일 미리보기:")
-    print(submission.head(10))
-    print(f"\n총 {len(submission)}개의 공행성 쌍에 대한 예측이 완료되었습니다.")
+        # 7. 제출 파일 저장
+        print("\n[7단계] 제출 파일 저장 중...")
+        output_path = '../data/submission.csv'
+        submission.to_csv(output_path, index=False)
+        print(f"제출 파일 저장 완료: {output_path}")
+        print(f"\n제출 파일 미리보기:")
+        print(submission.head(10))
+        print(f"\n총 {len(submission)}개의 공행성 쌍에 대한 예측이 완료되었습니다.")
 
 
 if __name__ == "__main__":
