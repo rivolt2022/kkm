@@ -208,7 +208,7 @@ def predict(pivot, pairs, reg, feature_cols, predict_month_idx=None):
         b_t_1 = b_series[t_prev]
         a_t_lag = a_series[t_last - lag]
 
-        # 추가 feature 계산
+        # 추가 feature 계산 (build_training_data와 동일하게)
         if t_last >= 2:
             b_trend = np.mean(b_series[max(0, t_last-2):t_last+1])
             a_trend = np.mean(a_series[max(0, t_last-lag-2):t_last-lag+1]) if t_last-lag >= 2 else a_t_lag
@@ -240,8 +240,11 @@ def predict(pivot, pairs, reg, feature_cols, predict_month_idx=None):
         }
 
         X_test = np.array([[features[col] for col in feature_cols]])
-        y_pred = reg.predict(X_test)[0]
-
+        y_pred_log = reg.predict(X_test)[0]
+        
+        # 로그 변환 역변환: exp(x) - 1
+        y_pred = np.expm1(y_pred_log)
+        
         # 후처리: 음수 예측 → 0으로 변환, 소수점 → 정수 변환
         y_pred = max(0.0, float(y_pred))
         y_pred = int(round(y_pred))
@@ -305,18 +308,23 @@ def cross_validate_with_kfold(pivot, pairs, feature_cols, is_validate_mode=False
         
         print(f"  학습 샘플 수: {len(X_train_fold)}, 검증 샘플 수: {len(X_val_fold)}")
         
-        # 모델 학습
+        # 모델 학습 (과적합 방지를 위한 보수적 튜닝)
         reg = xgb.XGBRegressor(
-            n_estimators=200,
-            max_depth=6,
-            learning_rate=0.1,
-            subsample=0.8,
-            colsample_bytree=0.8,
+            n_estimators=250,  # 트리 개수 약간 증가
+            max_depth=6,  # 깊이 유지
+            learning_rate=0.08,  # 학습률 약간 감소 (더 안정적인 학습)
+            subsample=0.85,  # 샘플 비율 약간 증가
+            colsample_bytree=0.85,  # Feature 샘플 비율 약간 증가
+            min_child_weight=3,  # 과적합 방지
+            reg_alpha=0.05,  # L1 정규화 (약한 정규화)
+            reg_lambda=0.5,  # L2 정규화 (약한 정규화)
             random_state=42,
             n_jobs=-1,
             verbosity=0
         )
-        reg.fit(X_train_fold, y_train_fold)
+        # 로그 변환된 타겟으로 학습
+        y_train_fold_log = np.log1p(y_train_fold)
+        reg.fit(X_train_fold, y_train_fold_log)
         
         # 전체 pairs에 대해 예측 (실제 제출 형식)
         # 각 fold에서 학습된 모델로 모든 공행성 쌍에 대해 예측
@@ -347,12 +355,16 @@ def cross_validate_with_kfold(pivot, pairs, feature_cols, is_validate_mode=False
             except Exception as e:
                 print(f"  Fold {fold_idx} 평가 중 오류: {e}")
     
-    # 모든 fold의 예측을 평균하여 최종 예측 생성
+    # 모든 fold의 예측을 앙상블하여 최종 예측 생성
     print("\n[KFold] 모든 fold의 예측을 앙상블 중...")
     final_rows = []
     for pair_key, predictions in all_predictions.items():
-        # 평균 계산
-        avg_pred = np.mean(predictions)
+        # 중앙값 사용 (이상치에 더 robust)
+        # 평균과 중앙값의 평균 사용 (안정성과 정확도 균형)
+        median_pred = np.median(predictions)
+        mean_pred = np.mean(predictions)
+        # 가중 평균: 중앙값 60%, 평균 40%
+        avg_pred = 0.6 * median_pred + 0.4 * mean_pred
         # 후처리: 음수는 0으로, 소수점은 정수로 반올림
         avg_pred = max(0.0, float(avg_pred))
         avg_pred = int(round(avg_pred))

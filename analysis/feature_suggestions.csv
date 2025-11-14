@@ -1,0 +1,6 @@
+feature_name,description,implementation,expected_benefit
+month_seasonality,월별 계절성 지표 (1-12월 패턴),각 월의 평균 무역량을 feature로 추가,계절적 패턴을 반영하여 예측 정확도 향상
+volatility,최근 N개월의 변동성 (표준편차/평균),최근 6개월의 CV 계산,변동성이 큰 품목의 예측 개선
+relative_size,선행/후행 품목의 상대적 크기 비율,a_t_lag / b_t (스케일 차이 보정),스케일 차이 문제 완화
+cumulative_sum,최근 N개월 누적 합계,"최근 3개월, 6개월 누적 합계",장기 트렌드 반영
+acceleration,변화율의 변화 (2차 미분),(b_t - b_t_1) - (b_t_1 - b_t_2),가속/감속 패턴 반영
