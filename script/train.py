@@ -12,6 +12,7 @@ import argparse
 import sys
 import os
 from sklearn.model_selection import KFold
+import matplotlib.pyplot as plt
 warnings.filterwarnings('ignore')
 
 # evaluation.py import를 위한 경로 추가
@@ -25,13 +26,83 @@ def safe_corr(x, y):
         return 0.0
     return float(np.corrcoef(x, y)[0, 1])
 
-
-def find_comovement_pairs(pivot, max_lag=6, min_nonzero=12, corr_threshold=0.35):
+def robust_lagged_corr(x, y, lag, top_k=2, use_log=True):
     """
-    공행성 쌍 탐색
+    lag 기준으로 정렬된 두 시계열 x, y에 대해
+    - (필수) lag를 맞춰 align 한 뒤
+    - (옵션) log1p 변환을 하고
+    - 상위 top_k 스파이크(값이 큰 달들)를 제거한 후
+    상관계수를 다시 계산하는 함수.
+
+    스파이크가 몇 개 빠지면 corr가 확 죽는 쌍을 걸러내는 용도.
+
+    Args:
+        x, y : 1D numpy array (leader, follower 원 시계열)
+        lag  : int, leader_t vs follower_{t+lag} 를 비교할 lag
+        top_k: int, 스파이크로 간주해서 제거할 상위 구간 개수
+        use_log: bool, 상관계수 계산을 log1p 스케일에서 할지 여부
+    """
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+
+    # lag 맞춰서 정렬 (네 원래 safe_corr 쓸 때와 동일한 방식)
+    x_aligned = x[:-lag]
+    y_aligned = y[lag:]
+    n = len(x_aligned)
+    if n == 0:
+        return 0.0
+
+    if use_log:
+        x_aligned = np.log1p(x_aligned)
+        y_aligned = np.log1p(y_aligned)
+
+    # 데이터가 너무 적으면 robust하게 제거하는 것 자체가 불안하니 그냥 corr 리턴
+    if n <= top_k + 3:
+        return safe_corr(x_aligned, y_aligned)
+
+    # "스파이크" 정의: |x| + |y| 값이 큰 순서대로 top_k 개
+    spike_score = np.abs(x_aligned) + np.abs(y_aligned)
+    spike_idx = np.argsort(-spike_score)[:top_k]
+
+    mask = np.ones(n, dtype=bool)
+    mask[spike_idx] = False
+
+    # 스파이크 제거 후 corr
+    return safe_corr(x_aligned[mask], y_aligned[mask])
+
+
+def find_comovement_pairs(
+    pivot,
+    max_lag=6,
+    min_nonzero=12,
+    corr_threshold=0.35,
+    use_log_corr=True,     # log1p 스케일에서 corr 계산할지
+    top_k_spike=2,         # 스파이크로 제거할 상위 구간 개수
+    use_robust=True,       # 스파이크 제거한 corr로 threshold 비교할지
+):
+    """
+    공행성 쌍 탐색 (스파이크 기반 공행성 필터링 포함 버전)
+
     - 각 (A, B) 쌍에 대해 lag = 1 ~ max_lag까지 Pearson 상관계수 계산
-    - 절댓값이 가장 큰 상관계수와 lag를 선택
-    - |corr| >= corr_threshold이면 A→B 공행성 있다고 판단
+      (기본은 log1p(value) 스케일에서)
+    - 절댓값이 가장 큰 상관계수와 lag를 선택 (best_lag, base_corr)
+    - 그 lag에 대해 스파이크 몇 개 제거한 robust corr를 추가로 계산
+    - |robust_corr| >= corr_threshold 인 쌍만 공행성쌍으로 채택
+
+    Args:
+        pivot        : item_id × ym 피벗 테이블 (value 기준)
+        max_lag      : 최대 lag (월 단위)
+        min_nonzero  : 최소 비제로 개수 (너무 sparse 한 시계열은 배제)
+        corr_threshold: robust corr 절댓값 기준 임계치
+        use_log_corr : True면 log1p 스케일에서 corr 계산
+        top_k_spike  : robust corr 계산 시 제거할 스파이크 개수
+        use_robust   : True면 robust_corr 기준으로 threshold 비교,
+                       False면 base_corr 기준으로 비교 (fallback 용)
+
+    Returns:
+        pairs: DataFrame
+            columns = [leading_item_id, following_item_id, best_lag, max_corr]
+            max_corr에는 "threshold를 만족한 corr" (기본: robust_corr)을 저장
     """
     items = pivot.index.to_list()
     months = pivot.columns.to_list()
@@ -40,39 +111,73 @@ def find_comovement_pairs(pivot, max_lag=6, min_nonzero=12, corr_threshold=0.35)
     results = []
 
     for i, leader in tqdm(enumerate(items), total=len(items), desc="공행성 쌍 탐색"):
-        x = pivot.loc[leader].values.astype(float)
-        if np.count_nonzero(x) < min_nonzero:
+        x_raw = pivot.loc[leader].values.astype(float)
+        if np.count_nonzero(x_raw) < min_nonzero:
             continue
+
+        # 미리 log 변환 버전도 만들어두기
+        if use_log_corr:
+            x_main = np.log1p(x_raw)
+        else:
+            x_main = x_raw
 
         for follower in items:
             if follower == leader:
                 continue
 
-            y = pivot.loc[follower].values.astype(float)
-            if np.count_nonzero(y) < min_nonzero:
+            y_raw = pivot.loc[follower].values.astype(float)
+            if np.count_nonzero(y_raw) < min_nonzero:
                 continue
+
+            if use_log_corr:
+                y_main = np.log1p(y_raw)
+            else:
+                y_main = y_raw
 
             best_lag = None
             best_corr = 0.0
 
-            # lag = 1 ~ max_lag 탐색
+            # 1) 기본 corr 기준(best_lag, best_corr) 탐색
             for lag in range(1, max_lag + 1):
                 if n_months <= lag:
                     continue
-                corr = safe_corr(x[:-lag], y[lag:])
+
+                x_aligned = x_main[:-lag]
+                y_aligned = y_main[lag:]
+                corr = safe_corr(x_aligned, y_aligned)
+
                 if abs(corr) > abs(best_corr):
                     best_corr = corr
                     best_lag = lag
 
+            if best_lag is None:
+                continue
 
-            # 임계값 이상이면 공행성쌍으로 채택
-            if best_lag is not None and abs(best_corr) >= corr_threshold:
-                results.append({
-                    "leading_item_id": leader,
-                    "following_item_id": follower,
-                    "best_lag": best_lag,
-                    "max_corr": best_corr,
-                })
+            # 2) 스파이크 제거한 robust corr 계산
+            if use_robust:
+                corr_robust = robust_lagged_corr(
+                    x_raw, y_raw,
+                    lag=best_lag,
+                    top_k=top_k_spike,
+                    use_log=use_log_corr,
+                )
+                corr_for_threshold = corr_robust
+            else:
+                corr_robust = best_corr
+                corr_for_threshold = best_corr
+
+            # 3) threshold 기준 통과 여부 판단
+            if abs(corr_for_threshold) < corr_threshold:
+                # 스파이크 몇 개 제거하면 상관이 확 떨어진다 → 그런 쌍은 버림
+                continue
+
+            results.append({
+                "leading_item_id": leader,
+                "following_item_id": follower,
+                "best_lag": int(best_lag),
+                # max_corr는 "필터링에 실제 사용된 corr"을 쓰는 게 직관적
+                "max_corr": float(corr_for_threshold),
+            })
 
     pairs = pd.DataFrame(results)
     return pairs
@@ -257,6 +362,118 @@ def predict(pivot, pairs, reg, feature_cols, predict_month_idx=None):
 
     df_pred = pd.DataFrame(preds)
     return df_pred
+
+def plot_comovement_pair(
+    pivot,
+    leader,
+    follower,
+    best_lag,
+    corr=None,
+    use_log=False,
+    shift_follower=True,
+    title_prefix="Pair",
+):
+    """
+    한 공행성 쌍(leader, follower)을 시계열로 그려주는 함수.
+
+    Args:
+        pivot         : item_id × ym 피벗 (value 기준)
+        leader        : 선행 품목 item_id
+        follower      : 후행 품목 item_id
+        best_lag      : 이 쌍의 best_lag (int)
+        corr          : 표시용 correlation 값 (float, 옵션)
+        use_log       : True면 log1p(value) 스케일로 플롯
+        shift_follower: True면 follower를 lag만큼 "당겨서" leader와 align
+        title_prefix  : 그래프 제목 앞에 붙일 텍스트
+    """
+    months = pivot.columns.to_list()
+    a = pivot.loc[leader].values.astype(float)
+    b = pivot.loc[follower].values.astype(float)
+
+    if use_log:
+        a_plot = np.log1p(a)
+        b_plot = np.log1p(b)
+        y_label = "log1p(Trade value)"
+    else:
+        a_plot = a
+        b_plot = b
+        y_label = "Trade value"
+
+    if shift_follower:
+        # leader_t vs follower_{t+lag} 를 같은 x축 월에 비교하도록 정렬
+        if best_lag >= len(months):
+            print(f"[경고] lag={best_lag}가 너무 커서 시각화 불가")
+            return
+
+        months_aligned = months[:-best_lag]
+        leader_series = a_plot[:-best_lag]
+        follower_series = b_plot[best_lag:]
+    else:
+        # 원 시계열 그대로 (lag 시각적 반영 X)
+        months_aligned = months
+        leader_series = a_plot
+        follower_series = b_plot
+
+    fig, ax = plt.subplots(figsize=(10, 4))
+    ax.plot(months_aligned, leader_series, label=f"Leader {leader}")
+    ax.plot(months_aligned, follower_series, label=f"Follower {follower}")
+
+    title = f"{title_prefix} {leader} → {follower} (lag={best_lag}"
+    if corr is not None:
+        title += f", corr={corr:.3f}"
+    title += ")"
+
+    ax.set_title(title)
+    ax.set_xlabel("Month (ym)")
+    ax.set_ylabel(y_label)
+    ax.legend()
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    plt.show()
+
+def plot_top_comovement_pairs(
+    pivot,
+    pairs,
+    top_k=5,
+    use_log=False,
+    shift_follower=True,
+):
+    """
+    공행성 쌍 DataFrame에서 |max_corr| 상위 top_k 개를 골라
+    각 쌍을 plot_comovement_pair로 차례대로 그려주는 함수.
+
+    Args:
+        pivot        : item_id × ym 피벗 (value 기준)
+        pairs        : find_comovement_pairs 결과 DataFrame
+        top_k        : 그릴 상위 쌍 개수
+        use_log      : True면 log1p 스케일로 플롯
+        shift_follower: True면 follower를 lag만큼 당겨서 leader와 align
+    """
+    if len(pairs) == 0:
+        print("pairs 가 비어 있습니다.")
+        return
+
+    # |max_corr| 기준으로 내림차순 정렬 후 상위 top_k
+    pairs_sorted = pairs.reindex(
+        pairs["max_corr"].abs().sort_values(ascending=False).index
+    ).head(top_k)
+
+    for idx, row in pairs_sorted.iterrows():
+        leader = row["leading_item_id"]
+        follower = row["following_item_id"]
+        lag = int(row["best_lag"])
+        corr = float(row["max_corr"])
+
+        plot_comovement_pair(
+            pivot,
+            leader,
+            follower,
+            best_lag=lag,
+            corr=corr,
+            use_log=use_log,
+            shift_follower=shift_follower,
+            title_prefix="Top pair",
+        )
 
 
 def cross_validate_with_kfold(pivot, pairs, feature_cols, is_validate_mode=False, 
@@ -472,8 +689,26 @@ def main():
     print("\n[3단계] 공행성 쌍 탐색 중...")
     if is_validate_mode:
         # 검증 모드: 학습 데이터로 예측할 공행성 쌍 탐색
-        pairs = find_comovement_pairs(pivot_train, max_lag=6, min_nonzero=12, corr_threshold=0.35)
+        pairs = find_comovement_pairs(
+            pivot_train, 
+            max_lag=6, 
+            min_nonzero=12, 
+            corr_threshold=0.35,
+            use_log_corr=True,
+            use_robust=True,
+            top_k_spike=2
+            )
         print(f"학습 데이터로 탐색된 공행성쌍 수: {len(pairs)}")
+
+        # 공행성 시각화 (상위 5개, lag 반영 + 로그 스케일)
+        print("\n[디버그] 상위 공행성쌍 5개 시각화 중...")
+        plot_top_comovement_pairs(
+            pivot,
+            pairs,
+            top_k=5,
+            use_log=True,         # log1p(value)로 보기
+            shift_follower=True,  # lag 반영해서 follower를 당겨서 보기
+        )
         
         # 정답 공행성 쌍 탐색 (검증 기간 전체 포함)
         # 실제 대회에서는 정답 공행성 쌍이 미리 정해져 있지만,
