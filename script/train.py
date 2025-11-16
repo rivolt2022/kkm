@@ -247,8 +247,14 @@ def predict(pivot, pairs, reg, feature_cols, predict_month_idx=None):
         # 로그 변환 역변환: exp(x) - 1
         y_pred = np.expm1(y_pred_log)
         
-        # 후처리: 음수 예측 → 0으로 변환, 소수점 → 정수 변환
+        # 후처리: 음수 예측 → 0으로 변환
         y_pred = max(0.0, float(y_pred))
+        
+        # 합리적인 범위로 클리핑 (b_t 기준 0.1배 ~ 10배 범위로 제한)
+        if b_t > 0:
+            y_pred = np.clip(y_pred, b_t * 0.1, b_t * 10.0)
+        
+        # 소수점 → 정수 변환
         y_pred = int(round(y_pred))
 
         preds.append({
