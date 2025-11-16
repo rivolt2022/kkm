@@ -1,0 +1,2383 @@
+안녕하세요 주머니쥐입니다 ㅎㅎ 제 부족한 코드가 한국에너지공단과 이글을 보시는 분들이게 조금이라도 도움이 되었으면 좋겠습니다.
+
+제가 활용한 핵심 전략은 2가지로 요약할 수 있을 것 같습니다.
+1. 첫번째는 2025년 nature 에 발표된 tabular data에 SOTA를 달성한 TabPFN [1] 이라는 딥러닝 모델을 활용한 것입니다. (Apache 2.0 license)
+1.1 해당 연구는 tabular data에서는 아직까지도 Gradient-Boosted Decision Trees (XGBoost, LightGBM, CatBoost 등) 가 SOTA라는 점을 지적합니다.
+1.2 다양한 분야에서 딥러닝 모델이 활약하고 있는데 tabular 데이터만 딥러닝이 활약하지 못하는 이유가 사전학습하기 위한 데이터가 부족하고 변수 개수와 형태가 문제라고 가정하였습니다.
+1.3 위의 문제를 해결하기 위해 해당 연구에서는 구조적 인과 모델을 활용하여 1억개 이상의 합성 데이터셋을 구축하여 transformer 기반 아키텍처를 사전학습하였습니다.
+1.4 해당 모델은 10,000개 샘플, 500개 feature 이하 데이터셋에서 SOTA 급의 성능을 달성하였습니다.
+
+2. 두번째는 각 건물별 맞춤형 최적의 변수를 찾아 주었습니다.
+2.1 2024년 6월 1일 부터 2024년 8월 24일까지의 train 데이터셋 중 마지막 일주일인 2024년 8월 18일에서 2024년 8월 24일 데이터를 val 으로 활용하였습니다.
+2.1 각 건물 별로 변수를 하나씩 제거해 보면서(후진 제거법 [2]) 가장 sampe가 개선되는 변수를 제거하여 각 건물 별로 최적의 solution을 제공해 주었습니다.
+
+코드는 코렙환경에서 따라할 수 있게 구성하였습니다.
+
+prologue
+안녕하세요 주머니쥐입니다 ㅎㅎ 제 부족한 코드가 한국에너지공단과 이글을 보시는 분들이게 조금이라도 도움이 되었으면 좋겠습니다.
+
+제가 활용한 핵심 전략은 2가지로 요약할 수 있을 것 같습니다.
+
+첫번째는 2025년 nature 에 발표된 tabular data에 SOTA를 달성한 TabPFN [1] 이라는 딥러닝 모델을 활용한 것입니다. (Apache 2.0 license)
+1.1 해당 연구는 tabular data에서는 아직까지도 Gradient-Boosted Decision Trees (XGBoost, LightGBM, CatBoost 등) 가 SOTA라는 점을 지적합니다.
+
+1.2 다양한 분야에서 딥러닝 모델이 활약하고 있는데 tabular 데이터만 딥러닝이 활약하지 못하는 이유가 사전학습하기 위한 데이터가 부족하고 변수 개수와 형태가 문제라고 가정하였습니다.
+
+1.3 위의 문제를 해결하기 위해 해당 연구에서는 구조적 인과 모델을 활용하여 1억개 이상의 합성 데이터셋을 구축하여 transformer 기반 아키텍처를 사전학습하였습니다.
+
+1.4 해당 모델은 10,000개 샘플, 500개 feature 이하 데이터셋에서 SOTA 급의 성능을 달성하였습니다.
+
+두번째는 각 건물별 맞춤형 최적의 변수를 찾아 주었습니다.
+2.1 2024년 6월 1일 부터 2024년 8월 24일까지의 train 데이터셋 중 마지막 일주일인 2024년 8월 18일에서 2024년 8월 24일 데이터를 val 으로 활용하였습니다.
+
+2.1 각 건물 별로 변수를 하나씩 제거해 보면서(후진 제거법 [2]) 가장 sampe가 개선되는 변수를 제거하여 각 건물 별로 최적의 solution을 제공해 주었습니다.
+
+[1] Hollmann, N., Müller, S., Purucker, L., Krishnakumar, A., Körfer, M., Hoo, S. B., ... & Hutter, F. (2025). Accurate predictions on small data with a tabular foundation model. Nature, 637(8045), 319-326.
+
+[2] Draper, N. R., & Smith, H. (1998). Applied Regression Analysis (3rd ed.). Wiley.
+
+분석환경은 기본적으로 구글 코렙에서 활용할 수 있도록 구성되어 있습니다. 저는 gpu 를 활용하기 위해서 3080 2대가 있는 우분투 22.04 서버를 추가로 활용하였습니다.
+
+
+import torch, torchvision, torchaudio, sklearn, pandas, numpy, matplotlib
+
+print("torch:", torch.__version__)
+print("torchvision:", torchvision.__version__)
+print("torchaudio:", torchaudio.__version__)
+print("sklearn:", sklearn.__version__)
+print("pandas:", pandas.__version__)
+print("numpy:", numpy.__version__)
+print("matplotlib:", matplotlib.__version__)
+torch: 2.8.0+cu126
+torchvision: 0.23.0+cu126
+torchaudio: 2.8.0+cu126
+sklearn: 1.6.1
+pandas: 2.2.2
+numpy: 2.0.2
+matplotlib: 3.10.0
+
+!lsb_release -a       # Ubuntu 버전
+!python --version     # Python 버전
+!nvcc --version       # CUDA 버전
+!nvidia-smi           # GPU, 드라이버, CUDA 런타임 확인
+No LSB modules are available.
+Distributor ID:	Ubuntu
+Description:	Ubuntu 22.04.4 LTS
+Release:	22.04
+Codename:	jammy
+Python 3.12.11
+nvcc: NVIDIA (R) Cuda compiler driver
+Copyright (c) 2005-2024 NVIDIA Corporation
+Built on Thu_Jun__6_02:18:23_PDT_2024
+Cuda compilation tools, release 12.5, V12.5.82
+Build cuda_12.5.r12.5/compiler.34385749_0
+Thu Aug 28 12:57:58 2025       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 550.54.15              Driver Version: 550.54.15      CUDA Version: 12.4     |
+|-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  Tesla T4                       Off |   00000000:00:04.0 Off |                    0 |
+| N/A   43C    P8              9W /   70W |       0MiB /  15360MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+                                                                                         
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI        PID   Type   Process name                              GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+Set enviroment
+런타임 다시실행 하셔야합니다.
+
+
+## Base library Installation
+# Install Baselines for model comparison
+!uv pip install catboost xgboost
+
+# Install the datasets library for loading example data
+!uv pip install datasets
+
+# Install rich for better and more readable printing
+!uv pip install rich
+
+
+## TabPFN Installation optimized for Google Colab
+# Install the TabPFN Client library
+!uv pip install tabpfn-client
+
+# Install tabpfn from source
+# Clone the repository: shallow for speedup
+!git clone --depth 1 https://github.com/PriorLabs/tabpfn
+
+# Speeding up installation in this notebook:
+# Remove torch dependency as it is already installed on colab (do not run this in your local setup)
+!sed -i "/torch/d" tabpfn/pyproject.toml
+
+# Step 3: Install using the correct directory name 'tabpfn'
+!uv pip install -e "tabpfn"
+
+# Install TabPFN extensions for additional functionalities
+!git clone https://github.com/PriorLabs/tabpfn-extensions
+
+# Speeding up installation in this notebook:
+# Remove torch dependency as it is already installed on colab (do not run this in your local setup)
+!sed -i "/torch/d" tabpfn-extensions/pyproject.toml
+
+!uv pip install -e tabpfn-extensions[all]
+
+!sudo apt-get update
+!sudo apt-get install -y fonts-nanum
+Using Python 3.12.11 environment at: /usr
+Audited 2 packages in 94ms
+Using Python 3.12.11 environment at: /usr
+Audited 1 package in 92ms
+Using Python 3.12.11 environment at: /usr
+Audited 1 package in 84ms
+Using Python 3.12.11 environment at: /usr
+Audited 1 package in 100ms
+fatal: destination path 'tabpfn' already exists and is not an empty directory.
+Using Python 3.12.11 environment at: /usr
+Resolved 32 packages in 80ms
+Prepared 1 package in 759ms
+Uninstalled 1 package in 0.48ms
+Installed 1 package in 1ms
+ ~ tabpfn==2.1.3 (from file:///content/tabpfn)
+fatal: destination path 'tabpfn-extensions' already exists and is not an empty directory.
+Using Python 3.12.11 environment at: /usr
+Resolved 65 packages in 509ms
+Prepared 1 package in 1.13s
+Uninstalled 1 package in 0.40ms
+Installed 1 package in 0.95ms
+ ~ tabpfn-extensions==0.1.4 (from file:///content/tabpfn-extensions)
+Hit:1 https://cloud.r-project.org/bin/linux/ubuntu jammy-cran40/ InRelease
+Hit:2 https://cli.github.com/packages stable InRelease
+Hit:3 https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64  InRelease
+Hit:4 http://security.ubuntu.com/ubuntu jammy-security InRelease
+Hit:5 http://archive.ubuntu.com/ubuntu jammy InRelease
+Hit:6 https://ppa.launchpadcontent.net/deadsnakes/ppa/ubuntu jammy InRelease
+Hit:7 http://archive.ubuntu.com/ubuntu jammy-updates InRelease
+Hit:8 https://ppa.launchpadcontent.net/graphics-drivers/ppa/ubuntu jammy InRelease
+Hit:9 https://r2u.stat.illinois.edu/ubuntu jammy InRelease
+Hit:10 https://ppa.launchpadcontent.net/ubuntugis/ppa/ubuntu jammy InRelease
+Hit:11 http://archive.ubuntu.com/ubuntu jammy-backports InRelease
+Reading package lists... Done
+W: Skipping acquire of configured file 'main/source/Sources' as repository 'https://r2u.stat.illinois.edu/ubuntu jammy InRelease' does not seem to provide it (sources.list entry misspelt?)
+Reading package lists... Done
+Building dependency tree... Done
+Reading state information... Done
+fonts-nanum is already the newest version (20200506-1).
+0 upgraded, 0 newly installed, 0 to remove and 37 not upgraded.
+
+# Standard Library Imports
+
+# TabPFN and Extensions
+
+try:
+    from tabpfn_extensions.post_hoc_ensembles.sklearn_interface import (
+        AutoTabPFNClassifier,
+    )
+
+    from tabpfn import TabPFNClassifier, TabPFNRegressor
+except ImportError:
+    raise ImportError(
+        "Warning: Could not import TabPFN / TabPFN extensions. Please run installation above and restart the session afterwards (Runtime > Restart Session)."
+    )
+
+# Data Science & Visualization
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import torch
+
+# Other ML Models
+from catboost import CatBoostClassifier, CatBoostRegressor
+
+# Notebook UI/Display
+from IPython.display import Markdown, display
+from rich.console import Console
+from rich.panel import Panel
+from rich.prompt import Prompt
+from rich.rule import Rule
+from sklearn.compose import make_column_selector, make_column_transformer
+
+# Scikit-Learn: Data & Preprocessing
+from sklearn.datasets import fetch_openml, load_breast_cancer
+
+# Scikit-Learn: Models
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+from sklearn.metrics import mean_squared_error, roc_auc_score
+from sklearn.model_selection import (
+    KFold,
+    StratifiedKFold,
+    cross_val_score,
+    train_test_split,
+)
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import LabelEncoder, OrdinalEncoder
+from xgboost import XGBClassifier, XGBRegressor
+
+# This transformer will be used to handle categorical features for the baseline models
+column_transformer = make_column_transformer(
+    (
+        OrdinalEncoder(handle_unknown="use_encoded_value", unknown_value=-1),
+        make_column_selector(dtype_include=["object", "category"]),
+    ),
+    remainder="passthrough",
+)
+
+import random
+import pandas as pd
+import numpy as np
+import os
+import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
+
+import torch
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(device)
+
+pd.set_option('display.max_columns', 100)
+pd.set_option('display.expand_frame_repr', False)
+
+# 재시작 및 실행
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
+
+# 1) 필요한 나눔 폰트 경로들 (있는 것만 등록)
+font_dir = "/usr/share/fonts/truetype/nanum"
+candidates = [
+    "NanumGothic.ttf",
+    "NanumGothicBold.ttf",
+    "NanumBarunGothic.ttf",
+    "NanumSquareR.ttf",
+]
+registered = []
+for fname in candidates:
+    fpath = os.path.join(font_dir, fname)
+    if os.path.exists(fpath):
+        fm.fontManager.addfont(fpath)
+        registered.append(fpath)
+
+# 2) 등록 후 실제 폰트 이름 확인(첫 번째 걸 기본으로 사용)
+names = [fm.FontProperties(fname=p).get_name() for p in registered]
+print("Registered font names:", names)
+
+# 3) rcParams 적용 (주 폰트 + 폴백)
+if names:
+    mpl.rcParams["font.family"] = names[0]
+    mpl.rcParams["font.sans-serif"] = names + ["DejaVu Sans"]
+else:
+    # 혹시 등록 실패 시 폴백
+    mpl.rcParams["font.family"] = "DejaVu Sans"
+
+mpl.rcParams["axes.unicode_minus"] = False
+
+print("현재 적용된 폰트:", mpl.rcParams["font.family"])
+cuda
+Registered font names: ['NanumGothic', 'NanumGothic', 'NanumBarunGothic', 'NanumSquare']
+현재 적용된 폰트: ['NanumGothic']
+데이터 전처리
+2021년도 2023년도 경진대회에서 전력예측에 유용한 파생변수에 관함 탐구가 충분히 논의 되었습니다. 따라서 이번 경진대회에서는 지난 경진대회에 활용되었던 기법들을 그대로 차용하였습니다.
+
+데이터 불러오기
+
+def load_and_preprocess_power_data(train_path, test_path, building_info_path):
+    # 1. 데이터 불러오기
+    train_df = pd.read_csv(train_path)
+    test_df = pd.read_csv(test_path)
+    build_info = pd.read_csv(building_info_path)
+
+    # 2. 결측치 전처리 ('-' → np.nan)
+    build_info.replace('-', np.nan, inplace=True)
+
+    # 3. 건물 정보 병합 (건물번호 기준)
+    train_df = train_df.merge(build_info, on='건물번호', how='left')
+    test_df = test_df.merge(build_info, on='건물번호', how='left')
+
+    return train_df, test_df, build_info
+파생 변수 생성
+일시 관련
+preprocess_datetime_columns 함수는 원본 데이터의 날짜·시간 관련 문자열을 가공해 분석에 활용하기 좋은 형태로 바꿉니다. 먼저 일시 컬럼에서 월, 일, 시간을 각각 숫자로 추출하고, num_date_time 문자열을 이용해 새로운 datetime 컬럼을 생성합니다. 이후 불필요해진 원래 컬럼은 제거합니다.
+
+add_calendar_features 함수는 시간 정보를 바탕으로 달력 관련 파생 변수를 만듭니다. 요일을 한글로 매핑하고, 각 요일별 one-hot 인코딩 변수를 생성합니다. 또 주말 여부(is_weekend), 지정된 공휴일 여부(is_holiday), 대형마트 의무휴업일 여부(is_mart_holiday)도 추가하여 다양한 달력 효과를 반영할 수 있게 합니다.
+
+add_summer_cyclic_features 함수는 여름철(6월 1일~8월 31일)의 계절적 주기를 고려한 변수들을 만듭니다. 여름 기간 내 상대적 시간 위치를 계산해 이를 코사인/사인 값으로 변환(summer_cos, summer_sin)해 주기성을 반영합니다. 또한 하루 24시간 주기성을 고려한 hour_sin과 hour_cos도 함께 생성하여 일일 주기를 모델이 학습할 수 있도록 합니다.
+
+
+def preprocess_datetime_columns(df):
+    df = df.copy()
+
+    # 1. month, day, time 추출
+    df['month'] = df['일시'].apply(lambda x: int(x[4:6]))
+    df['day'] = df['일시'].apply(lambda x: int(x[6:8]))
+    df['time'] = df['일시'].apply(lambda x: int(x[9:11]))
+
+    # 2. datetime 생성
+    df['datetime'] = pd.to_datetime(df['num_date_time'].apply(lambda x: x.split("_")[1]), format="%Y%m%d %H")
+
+    # 3. 원래 컬럼 제거
+    df.drop(['일시', 'num_date_time'], axis=1, inplace=True)
+
+    return df
+
+def add_calendar_features(df, datetime_col='datetime'):
+    import pandas as pd
+
+    df = df.copy()
+    date_series = pd.to_datetime(df[datetime_col])
+
+    # 1. 요일 (한글) 생성
+    weekday_map = {0: '월', 1: '화', 2: '수', 3: '목', 4: '금', 5: '토', 6: '일'}
+    df['요일'] = date_series.dt.weekday.map(weekday_map)
+
+    # 2. 요일 one-hot encoding
+    for day in ['월', '화', '수', '목', '금', '토', '일']:
+        df[f'is_{day}'] = (df['요일'] == day)
+
+    # 3. 주말 여부
+    df['is_weekend'] = df['요일'].isin(['토', '일'])
+
+    # 4. 일반 공휴일
+    holiday_dates = ['2024-06-06', '2024-08-15']
+    df['is_holiday'] = df[datetime_col].dt.date.isin(pd.to_datetime(holiday_dates).date)
+
+    # 5. 대형마트 공휴일
+    mart_holiday_dates = ['2024-06-09', '2024-06-23', '2024-07-14', '2024-07-28', '2024-08-11', '2024-08-25']
+    df['is_mart_holiday'] = df[datetime_col].dt.date.isin(pd.to_datetime(mart_holiday_dates).date)
+
+    return df
+
+import numpy as np
+from datetime import datetime
+
+def add_summer_cyclic_features(df, datetime_col='datetime'):
+    """
+    여름 기간(6월1일~9월14일)을 기준으로 cos/sin 주기 인코딩
+    """
+    df = df.copy()
+
+    # 여름 기준
+    summer_start = datetime(2024, 6, 1, 0, 0, 0)
+    summer_end = datetime(2024, 8, 31, 23, 0, 0)
+    period = (summer_end - summer_start).total_seconds()
+
+    # 시간 상대 위치 계산
+    df['summer_seconds'] = (df[datetime_col] - summer_start).dt.total_seconds()
+    df['summer_seconds'] = df['summer_seconds'].clip(lower=0, upper=period)
+
+    # cos/sin 변환
+    df['summer_cos'] = np.cos(2 * np.pi * df['summer_seconds'] / period)
+    df['summer_sin'] = np.sin(2 * np.pi * df['summer_seconds'] / period)
+
+    df["hour_sin"] = np.sin(2 * np.pi * df["time"] / 24)
+    df["hour_cos"] = np.cos(2 * np.pi * df["time"] / 24)
+    # 불필요한 중간 컬럼 제거
+    df.drop(columns=['summer_seconds'], inplace=True)
+
+    return df
+기온 관련
+add_temp_features 함수는 건물별·일별 데이터를 기준으로 기온 관련 지표를 만들어 줍니다. 우선 3시간 간격으로 측정된 값만 이용해 평균 기온을 계산하고, 일별 최고 기온과 최저 기온을 구해 병합합니다. 이렇게 얻은 최고·최저 기온 차이를 통해 일교차(temp_diff)를 추가하며, 현재 기온을 기준으로 다섯 구간(comfort, slightly_hot, hot, very_hot, extreme_hot)으로 나누어 범주형 변수(temp_category)를 생성합니다.
+
+add_temp_humidity_rolling 함수는 건물별 시간 순으로 데이터를 정렬한 뒤 이동평균을 구합니다. 기온과 습도에 대해 각각 4일(96시간) 이동 평균과 7일(168시간) 이동 평균을 계산하여 새로운 파생변수를 추가합니다.
+
+
+def add_temp_features(df, building_col='건물번호', temp_col='기온(°C)', hour_col='time', month_col='month', day_col='day'):
+    df = df.copy()
+
+    # ✅ avg_temp: 3시간 간격만 사용 (hour % 3 == 0)
+    avg_temp_df = (
+        df[df[hour_col] % 3 == 0]
+        .groupby([building_col, month_col, day_col])[temp_col]
+        .mean()
+        .reset_index()
+        .rename(columns={temp_col: 'avg_temp'})
+    )
+
+    # ✅ max_temp
+    max_temp_df = (
+        df.groupby([building_col, month_col, day_col])[temp_col]
+        .max()
+        .reset_index()
+        .rename(columns={temp_col: 'max_temp'})
+    )
+
+    # ✅ min_temp
+    min_temp_df = (
+        df.groupby([building_col, month_col, day_col])[temp_col]
+        .min()
+        .reset_index()
+        .rename(columns={temp_col: 'min_temp'})
+    )
+
+    # ✅ 병합
+    df = df.merge(avg_temp_df, on=[building_col, month_col, day_col], how='left')
+    df = df.merge(max_temp_df, on=[building_col, month_col, day_col], how='left')
+    df = df.merge(min_temp_df, on=[building_col, month_col, day_col], how='left')
+
+    # ✅ 일교차
+    df['temp_diff'] = df['max_temp'] - df['min_temp']
+
+    df['temp_category'] = pd.cut(
+        df[temp_col],
+        bins=[-np.inf, 24, 26, 28, 30, np.inf],
+        labels=['comfort', 'slightly_hot', 'hot', 'very_hot', 'extreme_hot']
+    )
+    return df
+
+def add_temp_humidity_rolling(df, building_col='건물번호', temp_col='기온(°C)', hum_col='습도(%)'):
+    df = df.copy()
+
+    # 정렬: 건물별 시간 순으로 rolling 적용을 위한 정렬
+    df = df.sort_values(by=[building_col, 'datetime'])  # datetime 컬럼이 있어야 함
+
+    # 4일 이동 평균 (4일 x 24시간 = 96시간)
+    df['기온_4일_이동평균'] = df.groupby(building_col)[temp_col].transform(lambda x: x.rolling(window=96, min_periods=1).mean())
+    df['습도_4일_이동평균'] = df.groupby(building_col)[hum_col].transform(lambda x: x.rolling(window=96, min_periods=1).mean())
+
+    # 7일 이동 평균 (7일 x 24시간 = 168시간)
+    df['기온_7일_이동평균'] = df.groupby(building_col)[temp_col].transform(lambda x: x.rolling(window=168, min_periods=1).mean())
+    df['습도_7일_이동평균'] = df.groupby(building_col)[hum_col].transform(lambda x: x.rolling(window=168, min_periods=1).mean())
+
+    return df
+강수량 관련
+비가 오면 그 전후 3시간까지 포함하여 weather=1 나머지는 0
+
+
+def add_weather_indicator(df, prec_col='강수량(mm)'):
+    df = df.copy()
+    df['weather'] = 0
+
+    # 강수 발생 시점 인덱스
+    rain_idx = df[df[prec_col] > 0].index
+
+    for idx in rain_idx:
+        for offset in range(-3, 4):  # -3 ~ +3
+            new_idx = idx + offset
+            if 0 <= new_idx < len(df):
+                df.at[new_idx, 'weather'] = 1
+    return df
+누적 냉방부하
+본 코드는 CDH(Cooling Degree Hours, 누적 냉방부하) 지표를 생성합니다. 먼저 compute_cdh_array는 온도 배열에서 기준온도(기본 26℃)를 초과한 값 (T-26)+만 취해 최근 window(기본 12시간) 구간의 합을 시점별로 계산합니다. add_cdh_indicator는 이를 데이터프레임에 적용하는 래퍼로, 건물번호별 그룹으로 나눈 뒤 각 그룹의 기온 시계열에 compute_cdh_array를 적용하여 CDH 컬럼을 추가합니다. 결과적으로, 각 시점에서 “최근 12시간 동안 얼마나 더웠는가”를 누적값으로 표현해 냉방수요 강도를 반영합니다.
+
+
+import numpy as np
+import pandas as pd
+
+def compute_cdh_array(xs, base_temp=26, window=12):
+
+    ys = []
+    for i in range(len(xs)):
+        if i < window - 1:
+            window_vals = xs[:(i+1)]
+        else:
+            window_vals = xs[(i - window + 1):(i + 1)]
+        excess = np.maximum(0, window_vals - base_temp)
+        ys.append(np.sum(excess))
+    return np.array(ys)
+
+def add_cdh_indicator(df, temp_col='기온(°C)', group_col='건물번호', base_temp=26, window=12):
+
+    df = df.copy()
+
+    def apply_cdh(group):
+        temps = group[temp_col].values
+        cdh_vals = compute_cdh_array(temps, base_temp=base_temp, window=window)
+        return pd.Series(cdh_vals, index=group.index)
+
+    df['CDH'] = df.groupby(group_col).apply(apply_cdh).reset_index(level=0, drop=True)
+    return df
+불쾌지수 관련
+본 함수는 시간·건물 단위의 기상/열환경 정보를 전력예측에 유용한 지표로 확장합니다. 먼저 THI_continuous(불쾌지수)를 생성/재사용하고 이를 등급화(1–4)하며, 필요 시 원-핫을 추가합니다. 체감온도 WC(풍속 기반)를 계산하고, 기온 초과 누적부하 CDH(기준 26℃, 12시간 롤링)와 THI 초과 누적부하 THIDH_12h(기준 26, 12시간)를 만듭니다. 더불어 THI의 단기 추세를 담기 위해 3/6/12시간 창 기준 롤링 평균/최대/표준편차와 시차 특성(1/3/6시간 lag) 을 생성합니다.
+
+
+import numpy as np
+import pandas as pd
+
+def add_side_indicators(df, **kwargs):
+    """
+    기존처럼 호출할 수 있는 wrapper.
+    내부적으로 add_thermal_side_features를 불러서 처리합니다.
+
+    예:
+        train_df = add_side_indicators(train_df)
+        test_df  = add_side_indicators(test_df)
+    """
+    return add_thermal_side_features(df, **kwargs)
+
+
+def add_thermal_side_features(
+    df: pd.DataFrame,
+    # 기본 컬럼 이름
+    temp_col: str = "기온(°C)",
+    hum_col: str  = "습도(%)",
+    wind_col: str = "풍속(m/s)",
+    group_col: str = "건물번호",
+    time_col: str  = "datetime",
+    # THI/등급/원핫
+    thi_col: str   = "THI_continuous",   # 존재하면 재사용, 없으면 계산
+    make_onehot: bool = True,
+    # CDH / THIDH
+    cdh_base_temp: float = 26.0,
+    cdh_window: int = 12,
+    thidh_base: float = 26.0,
+    thidh_window: int = 12,
+    # 롤링/라그/열파
+    roll_windows: tuple = (3, 6, 12),
+    lag_list: tuple = (1, 3, 6),
+    heatwave_thr: float = 80.0,
+    heatwave_min_len: int = 6,
+    # 기능 on/off
+    add_windchill: bool = True,
+    add_cdh: bool = True,
+    add_thidh: bool = True,
+    add_roll_stats: bool = True,
+    add_lags: bool = True,
+    add_daily_broadcast: bool = True,
+    add_building_norms: bool = True,
+    add_heatwave_flag: bool = True,
+):
+
+    out = df.copy()
+
+    # --- 시간 컬럼 보장 ---
+    if time_col in out.columns:
+        out[time_col] = pd.to_datetime(out[time_col], errors="coerce")
+    else:
+        out.index = pd.to_datetime(out.index, errors="coerce")
+        out[time_col] = out.index
+
+    # --- 숫자/클리핑 보장 ---
+    T  = pd.to_numeric(out[temp_col], errors="coerce")
+    RH = pd.to_numeric(out[hum_col],  errors="coerce").clip(0, 100)
+    if wind_col in out.columns:
+        W  = pd.to_numeric(out[wind_col], errors="coerce")
+    else:
+        W = pd.Series(np.nan, index=out.index)
+
+    # --- 정렬(그룹·시간) ---
+    out = out.sort_values([group_col, time_col])
+
+    # --- THI 연속값(없으면 생성) ---
+    if thi_col not in out.columns:
+        out[thi_col] = (9/5) * T - 0.55 * (1 - RH/100.0) * ((9/5) * T - 26) + 32
+
+    # --- THI 등급 + (옵션) 원핫 ---
+    out["THI_grade"] = pd.cut(
+        out[thi_col],
+        bins=[-np.inf, 68, 75, 80, np.inf],
+        labels=[1, 2, 3, 4]
+    ).astype("int64")
+
+    if make_onehot:
+        dummies = pd.get_dummies(out["THI_grade"], prefix="THI_grade")
+        out = pd.concat([out, dummies], axis=1)
+
+    # --- (옵션) 풍속 기반 체감온도(WC) ---
+    if add_windchill:
+        out["WC"] = 13.12 + 0.6215*T - 13.947*(W**0.16) + 0.486*T*(W**0.16)
+
+    # --- (옵션) CDH ---
+    if add_cdh:
+        def _cdh(s):
+            excess = (pd.to_numeric(s, errors="coerce") - cdh_base_temp).clip(lower=0)
+            return excess.rolling(window=cdh_window, min_periods=1).sum()
+        out["CDH"] = out.groupby(group_col, group_keys=False)[temp_col].apply(_cdh)
+
+    # --- (옵션) THIDH ---
+    if add_thidh:
+        def _thidh(s):
+            exc = (pd.to_numeric(s, errors="coerce") - thidh_base).clip(lower=0)
+            return exc.rolling(window=thidh_window, min_periods=1).sum()
+        out[f"THIDH_{thidh_window}h"] = out.groupby(group_col, group_keys=False)[thi_col].apply(_thidh)
+
+    # --- (옵션) 롤링 통계 ---
+    if add_roll_stats and roll_windows:
+        for w in roll_windows:
+            out[f"THI_roll_mean_{w}h"] = (
+                out.groupby(group_col, group_keys=False)[thi_col]
+                   .apply(lambda s: s.rolling(w, min_periods=1).mean())
+            )
+            out[f"THI_roll_max_{w}h"] = (
+                out.groupby(group_col, group_keys=False)[thi_col]
+                   .apply(lambda s: s.rolling(w, min_periods=1).max())
+            )
+            out[f"THI_roll_std_{w}h"] = (
+                out.groupby(group_col, group_keys=False)[thi_col]
+                   .apply(lambda s: s.rolling(w, min_periods=2).std())
+                   .fillna(0.0)
+            )
+
+    # --- (옵션) 라그 ---
+    if add_lags and lag_list:
+        g = out.groupby(group_col, group_keys=False)[thi_col]
+        for L in lag_list:
+            lag_col = f"THI_lag_{L}h"
+            out[lag_col] = g.shift(L)
+            out[lag_col] = (
+                out.groupby(group_col, group_keys=False)[lag_col]
+                   .apply(lambda s: s.ffill().bfill())
+                   .astype(float)
+            )
+
+    # --- (옵션) 일일 브로드캐스트 ---
+    if add_daily_broadcast:
+        out["_day"] = out[time_col].dt.normalize()
+        daily = (
+            out.groupby([group_col, "_day"], as_index=False)[thi_col]
+               .agg(THI_day_max="max", THI_day_mean="mean")
+        )
+        out = out.merge(daily, on=[group_col, "_day"], how="left").drop(columns=["_day"])
+
+    # --- (옵션) 건물별 표준화/백분위 ---
+    if add_building_norms:
+        def _z_building(s):
+            m = s.mean()
+            sd = s.std(ddof=0)
+            sd = sd if sd and np.isfinite(sd) else 1.0
+            return (s - m) / sd
+        out["THI_z_building"] = (
+            out.groupby(group_col)[thi_col]
+               .transform(_z_building)
+               .fillna(0.0)
+        )
+        out["THI_pct_building"] = (
+            out.groupby(group_col)[thi_col]
+               .transform(lambda s: s.rank(pct=True))
+               .astype(float)
+        )
+
+    # --- (옵션) 열파 플래그 ---
+    if add_heatwave_flag:
+        def _runlen_flag(x, thr=heatwave_thr, min_len=heatwave_min_len):
+            v = (x >= thr).astype(int).values
+            out_flag = np.zeros_like(v)
+            cnt = 0
+            for i, z in enumerate(v):
+                cnt = cnt + 1 if z == 1 else 0
+                out_flag[i] = 1 if cnt >= min_len else 0
+            return pd.Series(out_flag, index=x.index)
+        out[f"THI_heatwave_{heatwave_min_len}h"] = (
+            out.groupby(group_col, group_keys=False)[thi_col]
+               .apply(lambda s: _runlen_flag(s, heatwave_thr, heatwave_min_len))
+        )
+
+    return out
+기타
+첫째, THIDH_12h는 불쾌지수(THI)가 기준(26)을 초과한 값을 12시간 동안 누적한 지표로, 단기간 더위가 얼마나 지속되었는지를 반영합니다.
+
+둘째, CDD_day는 하루 동안 기온이 기준(26℃)을 넘는 초과분을 모두 합산한 값으로, 하루 전체의 냉방 부담 정도를 나타냅니다. 이를 각 시간별 데이터에 브로드캐스트하여, 시계열 전력소비 예측 시 더위의 강도와 지속성을 함께 고려할 수 있도록 설계되었습니다.
+
+
+import numpy as np
+import pandas as pd
+
+# -----------------------------
+# 0) 공통: rolling degree-hours
+# -----------------------------
+def rolling_degree_hours(s: pd.Series, base: float, window: int) -> pd.Series:
+    """
+    (s - base)+ 의 rolling sum
+    """
+    exc = (s - base).clip(lower=0)
+    return exc.rolling(window=window, min_periods=1).sum()
+
+# ---------------------------------------------------
+# 1) 일별 CDD 브로드캐스트 (자정~자정, 그룹별)
+# ---------------------------------------------------
+def broadcast_daily_cdd(df, temp_col="기온(°C)", group_col="건물번호", base_temp=26):
+    """
+    하루 단위 CDD = (T - base)+ 의 '일합'을 구해
+    원 해상도(시간별 행)에 브로드캐스트한다.
+    """
+    out = df.copy()
+
+    # 날짜 열(normalize)
+    if "datetime" in out.columns:
+        out["datetime"] = pd.to_datetime(out["datetime"], errors="coerce")
+        day = out["datetime"].dt.normalize()
+    else:
+        out.index = pd.to_datetime(out.index, errors="coerce")
+        day = out.index.normalize()
+    out["_day"] = day
+
+    # (T-base)+ 계산
+    excess = (pd.to_numeric(out[temp_col], errors="coerce") - float(base_temp)).clip(lower=0)
+    out["_excess"] = excess
+
+    # 일별 합계 (건물번호, 날짜)
+    daily = (
+        out.groupby([group_col, "_day"], as_index=False)["_excess"]
+           .sum()
+           .rename(columns={"_excess": "CDD_day"})
+    )
+
+    # 원본에 브로드캐스트 merge
+    out = out.merge(daily, on=[group_col, "_day"], how="left")
+
+    # 정리
+    out.drop(columns=["_day", "_excess"], inplace=True)
+
+    return out
+
+# ---------------------------------------------------
+# 2) 메인: 냉방부하 파생변수 추가 (간소화)
+# ---------------------------------------------------
+def add_cooling_load_features(
+    df: pd.DataFrame,
+    group_col: str = "건물번호",
+    temp_col: str = "기온(°C)",
+    thi_col: str = "THI_continuous",
+    base_temp: float = 26.0,
+    add_thidh_12h: bool = True,
+    add_cdd_day: bool = True,
+):
+
+    out = df.copy()
+
+    # datetime 보장
+    if "datetime" in out.columns:
+        out["datetime"] = pd.to_datetime(out["datetime"], errors="coerce")
+    else:
+        out.index = pd.to_datetime(out.index, errors="coerce")
+        out["datetime"] = out.index
+
+    # 정렬(rolling 일관성)
+    out = out.sort_values([group_col, "datetime"])
+
+    # ---- THIDH_12h (THI 기반) ----
+    if add_thidh_12h and thi_col in out.columns:
+        THI_BASE = 26.0  # 필요 시 인자로 노출해도 됨
+        out["THIDH_12h"] = (
+            out
+            .groupby(group_col, group_keys=False)[thi_col]
+            .apply(lambda s: rolling_degree_hours(s, base=THI_BASE, window=12))
+        )
+
+    # ---- CDD_day (일합 브로드캐스트) ----
+    if add_cdd_day:
+        out = broadcast_daily_cdd(out, temp_col=temp_col, group_col=group_col, base_temp=base_temp)
+
+    return out
+파생변수 적용
+
+#데이터 불러오기
+train_path = './data/train.csv'
+test_path = './data/test.csv'
+building_info_path = './data/building_info.csv'
+train_df, test_df, build_info = load_and_preprocess_power_data(train_path, test_path, building_info_path)
+
+# 일시 관련 augmentation
+train_df = preprocess_datetime_columns(train_df)
+test_df = preprocess_datetime_columns(test_df)
+
+train_df = add_calendar_features(train_df)
+test_df = add_calendar_features(test_df)
+
+train_df = add_summer_cyclic_features(train_df)
+test_df = add_summer_cyclic_features(test_df)
+
+# 기온 관련 augmentation
+train_df = add_temp_humidity_rolling(train_df)
+test_df = add_temp_humidity_rolling(test_df)
+
+train_df = add_temp_features(train_df)
+test_df = add_temp_features(test_df)
+
+# 강수량 관련 augmentation
+train_df = add_weather_indicator(train_df)
+test_df = add_weather_indicator(test_df)
+
+# 누적 냉방부하
+train_df = add_cdh_indicator(train_df)
+test_df = add_cdh_indicator(test_df)
+
+#  불쾌지수 지표
+train_df = add_side_indicators(
+    train_df,
+    make_onehot=False,
+    add_building_norms=False,
+    roll_windows=(),
+)
+
+test_df = add_side_indicators(
+    test_df,
+    make_onehot=False,
+    add_building_norms=False,
+    roll_windows=(),
+)
+
+# 기타 파생 변수
+train_df = add_cooling_load_features(
+    train_df,
+    group_col="건물번호",
+    temp_col="기온(°C)",
+    thi_col="THI_continuous",
+    base_temp=26,
+    add_thidh_12h=True,
+    add_cdd_day=True,
+)
+
+test_df = add_cooling_load_features(
+    test_df,
+    group_col="건물번호",
+    temp_col="기온(°C)",
+    thi_col="THI_continuous",
+    base_temp=26,
+    add_thidh_12h=True,
+    add_cdd_day=True,
+)
+/tmp/ipython-input-416996935.py:25: DeprecationWarning: DataFrameGroupBy.apply operated on the grouping columns. This behavior is deprecated, and in a future version of pandas the grouping columns will be excluded from the operation. Either pass `include_groups=False` to exclude the groupings or explicitly select the grouping columns after groupby to silence this warning.
+  df['CDH'] = df.groupby(group_col).apply(apply_cdh).reset_index(level=0, drop=True)
+/tmp/ipython-input-416996935.py:25: DeprecationWarning: DataFrameGroupBy.apply operated on the grouping columns. This behavior is deprecated, and in a future version of pandas the grouping columns will be excluded from the operation. Either pass `include_groups=False` to exclude the groupings or explicitly select the grouping columns after groupby to silence this warning.
+  df['CDH'] = df.groupby(group_col).apply(apply_cdh).reset_index(level=0, drop=True)
+공휴일 처리
+1번부터 100번까지 건물의 전력 소비 데이터를 직접 확인하면서, 공휴일로 보이는 일자를 하나씩 체크했습니다.
+
+큰 범주로는 '휴일 없음', '주말+공휴일에 휴일', '대형마트 공휴일' 정도를 기본으로 분류를 진행하였습니다. 분류를 진행하면서 규칙 없이 등장하는 휴무일이 생각보다 많이 포함되어 있다는 것이었습니다. 이런 불규칙적인 특징은 말 그대로 패턴이 없기 때문에 알고리즘으로는 잘 감지되지 않습니다. 만약 이런 데이터가 그대로 모델에 들어간다면, 모델 역시도 원인을 알 수 없어 성능에 부정적인 영향을 줄 수 있습니다. 그래서 이번에는 사람이 직접 확인하고 처리해주는 방식을 선택했습니다.
+
+물론 건물 수가 수천 개로 늘어나고, 기간이 수년에 걸친 대규모 데이터라면 수작업은 사실상 불가능하니, 자동화된 탐지 로직을 고려해야 할 것입니다. 하지만 이번 데이터는 건물 100개, 기간도 3개월 정도로 제한적이었기 때문에, 제 기준으로는 약 2시간 정도 투자하면 충분히 처리할 수 있는 규모였습니다.
+
+
+import pandas as pd
+
+# 1. 불규칙적 휴일
+custom_holidays = {
+    38: ['2024-06-07'], # 원인 불명
+    95: ['2024-07-08', '2024-08-05'], # 원인 불명
+    79: ['2024-06-17', '2024-07-01', '2024-08-19'], # 원인 불명
+    74: ['2024-06-17', '2024-07-01'], # 원인 불명
+    54: ['2024-06-17', '2024-07-01', '2024-08-19'], # 원인 불명
+    45: ['2024-06-10', '2024-07-08', '2024-08-19'], # 원인 불명
+    19: ['2024-06-10', '2024-07-08', '2024-08-19'], # 원인 불명
+    29: ['2024-06-10', '2024-06-23', '2024-07-10', '2024-07-28', '2024-08-10', '2024-08-25'],# 4번째 일요일은 휴무일, 나머지는 랜덤
+    49: ['2024-08-22'], # 원인 불명
+    32: ['2024-06-10', '2024-06-24', '2024-07-08', '2024-07-22', '2024-08-12', '2024-08-26'] # 매달 두번째 월요일
+}
+
+custom_holiday_ranges = {
+    7: [
+        (pd.Timestamp("2024-07-07 10:00:00"), pd.Timestamp("2024-07-08 11:00:00")),
+        (pd.Timestamp("2024-07-12 15:00:00"), pd.Timestamp("2024-08-06 02:00:00")),
+    ],
+    10: [
+        (pd.Timestamp("2024-07-04 08:00:00"), pd.Timestamp("2024-08-22 16:00:00"))
+        ]
+} # 원인 불명 (예상: 휴가 or 특별 파티 등)
+
+# 2. mart holiday
+mart_like_buildings = [27, 40, 59, 63]
+
+# 3. 휴일 없음
+no_holiday_buildings = [
+    1, 4, 9, 11, 25, 26, 28, 30, 31, 33, 34, 35, 36, 41, 57, 58, 61, 65, 70, 71, 73, 76, 77, 78, 82, 84, 85, 88, 89, 91, 92, 93, 96, 97, 98, 99
+]
+
+
+# 4. 토+일+공휴일
+weekend_public_buildings = [
+    3, 5, 6, 8, 12, 13, 14, 15, 16, 17, 20, 21, 22, 24, 37, 38, 39, 42, 43, 44, 46, 47, 48, 49, 51, 52, 53, 55, 56, 60, 62, 64, 67, 68, 69, 72, 75, 80, 83, 86, 87, 90
+]
+
+# 5. 토+일+공휴일+추가
+weekend_public_plus_extra_buildings = [23, 56, 94, 97]
+
+# 6. 공휴일/임시공휴일 정의
+public_holidays = [pd.to_datetime("2024-06-06"), pd.to_datetime("2024-08-15")]
+extra_holidays = [pd.to_datetime("2024-06-07"), pd.to_datetime("2024-08-16")]
+
+# 7. 처리 함수 정의
+def assign_true_holiday(df):
+    df = df.copy()
+    if not pd.api.types.is_datetime64_any_dtype(df.get("datetime")):
+        df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
+
+    # 기본 변수 초기화
+    df['true_holiday'] = False
+    for b in df['건물번호'].unique():
+        b_mask = df['건물번호'] == b
+        sub_df = df.loc[b_mask]
+
+        # (1) 기존 규칙 적용 → true_holiday 설정
+        if b in custom_holidays:
+            dates = pd.to_datetime(custom_holidays[b])
+            mask = sub_df['datetime'].dt.normalize().isin(dates)
+            df.loc[b_mask & mask, 'true_holiday'] = True
+
+        elif b in mart_like_buildings and 'is_mart_holiday' in df.columns:
+            df.loc[b_mask, 'true_holiday'] = df.loc[b_mask, 'is_mart_holiday']
+
+        elif b in no_holiday_buildings:
+            pass
+
+        elif b in weekend_public_buildings:
+            is_weekend = sub_df['요일'].isin(['토', '일'])
+            is_public = sub_df['datetime'].dt.normalize().isin(public_holidays)
+            df.loc[b_mask, 'true_holiday'] = is_weekend | is_public
+
+        elif b in weekend_public_plus_extra_buildings:
+            is_weekend = sub_df['요일'].isin(['토', '일'])
+            is_public = sub_df['datetime'].dt.normalize().isin(public_holidays)
+            is_extra = sub_df['datetime'].dt.normalize().isin(extra_holidays)
+            df.loc[b_mask, 'true_holiday'] = is_weekend | is_public | is_extra
+
+        # (추가) 건물별 custom range
+        if b in custom_holiday_ranges:
+            for s, e in custom_holiday_ranges[b]:
+                rng_mask = (sub_df['datetime'] >= s) & (sub_df['datetime'] <= e)
+                df.loc[b_mask & rng_mask, 'true_holiday'] = True
+
+        # (NEW) true_holiday 전날/다음날 마킹
+        holiday_dates = sub_df.loc[sub_df['true_holiday'], 'datetime'].dt.normalize().unique()
+        before_dates = holiday_dates - pd.Timedelta(days=1)
+        after_dates  = holiday_dates + pd.Timedelta(days=1)
+
+
+    return df
+
+# 공휴일 적용
+train_df = assign_true_holiday(train_df)
+test_df = assign_true_holiday(test_df)
+이상치 보간
+스파이크 값 발생 기간이 짧고 시간에 따라 변화의 폭이 크지 않은 경우 선형적으로 보간을 해 주었습니다.
+
+특정 일시에 이상치가 많이 몰려있다는 것을 경험적으로 발견을 했는데, 해당 기간에 전국적인 정전이 발생하지 않았을까 생각이 들었습니다. 하지만 정전은 언제 발생할지 예측할 수 없습니다. 이러한 예측할 수 없는 이상치의 경우 모델에 혼란만 야기할 뿐입니다. 제거해야합니다.
+
+일률적으로 제거할 수 있는 알고리즘을 많이 시도해 보았습니다만 모든 건물에 예외없이 제거할 수 있는 것은 아직까지 발견하지 못하였습니다. 이부분에 관한 연구도 진행될 필요성을 느꼈습니다.
+
+
+RULES = {
+  3: {'exact': ['2024-07-17 14:00:00']},
+ 5: {'ranges': [('2024-08-04 06:00:00', '2024-08-04 08:00:00')]},
+ 8: {'ranges': [('2024-07-21 08:00:00', '2024-07-21 11:00:00')]},
+ 12: {'exact': ['2024-07-17 14:00:00'],
+      'ranges': [('2024-07-21 08:00:00', '2024-07-21 11:00:00'),
+                 ('2024-08-24 08:00:00', '2024-08-24 10:00:00')]},
+ 18: {'exact': ['2024-07-17 14:00:00', '2024-08-08 15:00:00'],
+      'ranges': [('2024-06-11 17:00:00', '2024-06-11 18:00:00')]},
+ 19: {'ranges': [('2024-07-31 14:00:00', '2024-07-31 16:00:00')]},
+ 20: {'ranges': [('2024-06-01 10:00:00', '2024-06-01 11:00:00')]},
+ 24: {'ranges': [('2024-07-17 14:00:00', '2024-07-17 15:00:00')]},
+ 28: {'ranges': [('2024-07-17 14:00:00', '2024-07-17 15:00:00')]},
+ 30: {'exact': ['2024-07-13 20:00:00', '2024-07-25 00:00:00']},
+ 31: {'exact': ['2024-07-17 14:00:00']},
+ 38: {'ranges': [('2024-07-17 14:00:00', '2024-07-17 15:00:00')]},
+ 40: {'exact': ['2024-07-14 00:00:00','2024-07-14 01:00:00']},
+ 41: {'ranges': [('2024-06-22 01:00:00', '2024-06-22 04:00:00'),
+                 ('2024-07-17 09:00:00', '2024-07-17 15:00:00')]},
+ 42: {'exact': ['2024-07-17 14:00:00']},
+ 43: {'ranges': [('2024-06-10 17:00:00', '2024-06-10 18:00:00'),
+                 ('2024-08-12 16:00:00', '2024-08-12 17:00:00')]},
+ 44: {'ranges': [('2024-06-06 12:00:00', '2024-06-06 14:00:00')],
+      'ranges': [('2024-06-30 00:00:00', '2024-06-30 02:00:00')]},
+ 47: {'exact': ['2024-07-17 14:00:00']},
+ 49: {'ranges': [('2024-06-15 09:00:00', '2024-06-15 11:00:00')]},
+ 50: {'exact': ['2024-07-05 14:00:00'],
+      'ranges': [('2024-07-01 11:00:00', '2024-07-01 13:00:00'),
+                 ('2024-08-08 15:00:00', '2024-08-08 16:00:00')]},
+ 52: {'ranges': [('2024-08-10 00:00:00', '2024-08-10 02:00:00')]},
+ 53: {'exact': ['2024-07-17 14:00:00']},
+ 55: {'exact': ['2024-07-17 14:00:00']},
+ 60: {'ranges': [('2024-07-17 14:00:00', '2024-07-17 15:00:00')]},
+ 62: {'ranges': [('2024-07-17 14:00:00', '2024-07-17 15:00:00')]},
+ 67: {'ranges': [('2024-08-01 15:00:00', '2024-08-01 16:00:00'),
+                 ('2024-08-12 16:00:00', '2024-08-12 17:00:00')]},
+ 69: {'ranges': [('2024-07-17 14:00:00', '2024-07-17 15:00:00')]},
+ 70: {'ranges': [('2024-06-03 11:00:00', '2024-06-03 12:00:00'),
+                 ('2024-06-04 09:00:00', '2024-06-05 08:00:00')]},
+ 72: {'ranges': [('2024-07-21 10:00:00', '2024-07-21 11:00:00')]},
+ 73: {'exact': ['2024-07-08 22:00:00']},
+ 76: {'exact': ['2024-06-03 13:00:00',
+                '2024-08-22 15:00:00',
+                '2024-08-22 21:00:00'],
+      'ranges': [('2024-06-20 12:00:00', '2024-06-20 16:00:00')]},
+ 78: {'ranges': [('2024-07-17 13:00:00', '2024-07-17 14:00:00')]},
+ 79: {'ranges': [('2024-08-19 03:00:00', '2024-08-19 05:00:00')]},
+ 80: {'ranges': [('2024-07-06 09:00:00', '2024-07-06 15:00:00'),
+                 ('2024-07-08 11:00:00', '2024-07-08 14:00:00'),
+                 ('2024-07-08 19:00:00', '2024-07-08 20:00:00'),
+                 ('2024-07-20 09:00:00', '2024-07-20 13:00:00')]},
+ 81: {'exact': ['2024-06-27 14:00:00', '2024-07-17 14:00:00']},
+ 82: {'exact': ['2024-07-17 14:00:00']},
+ 90: {'ranges': [('2024-06-05 17:00:00', '2024-06-05 18:00:00')]},
+ 93: {'exact': ['2024-07-17 15:00:00']},
+ 98: {'ranges': [('2024-06-13 14:00:00', '2024-06-13 15:00:00')]}
+}
+
+import pandas as pd
+import numpy as np
+
+# 예: RULES 는 질문에 주신 dict 그대로 사용
+# RULES = { ... }
+
+TARGET = "전력소비량(kWh)"
+
+def to_ts(x):
+    """문자열 → pandas.Timestamp (이미 Timestamp면 그대로)"""
+    return pd.to_datetime(x)
+
+def build_outlier_mask(df, rules):
+    """
+    rules에 정의된 exact / ranges를 바탕으로
+    df 각 행이 이상치인지(True/False) 마스크를 반환
+    """
+    m = pd.Series(False, index=df.index)
+    # 보장을 위해 타입 통일
+    dt = pd.to_datetime(df["datetime"])
+    bno = df["건물번호"]
+
+    for b, spec in rules.items():
+        sel_b = (bno == b)
+
+        # exact 타임스탬프들
+        for t_str in spec.get("exact", []):
+            t = to_ts(t_str)
+            m |= sel_b & (dt == t)
+
+        # ranges: [ (start, end), ... ]  (양끝 포함)
+        for start_str, end_str in spec.get("ranges", []):
+            s = to_ts(start_str)
+            e = to_ts(end_str)
+            m |= sel_b & (dt >= s) & (dt <= e)
+
+    return m
+
+def interpolate_outliers_linear(df, rules, target_col=TARGET, keep_original=True):
+    """
+    RULES에 해당하는 구간을 이상치로 간주 → NaN으로 만들고,
+    시간기반 선형 보간(method='time')으로 채웁니다.
+    - 1시간 간격 연속 구간은 자동으로 선형 연결
+    - 끝단(outlier가 맨 앞/뒤)에 걸린 경우도 선형 외삽으로 채우도록 설정
+    """
+    out = df.copy()
+    # 형식 통일 & 정렬
+    out["datetime"] = pd.to_datetime(out["datetime"])
+    out = out.sort_values(["건물번호", "datetime"]).reset_index(drop=True)
+
+    if keep_original and f"{target_col}_orig" not in out.columns:
+        out[f"{target_col}_orig"] = out[target_col]
+
+    # 전체 이상치 마스크
+    outlier_mask = build_outlier_mask(out, rules)
+
+    # 건물별로 시간 보간
+    filled_list = []
+    for b, g in out.groupby("건물번호", sort=False):
+        g = g.copy()
+        # 이상치 위치를 NaN으로
+        g.loc[outlier_mask.loc[g.index], target_col] = np.nan
+
+        # 시간 인덱스 설정
+        g = g.set_index("datetime")
+
+        # 시간 기반 선형 보간 (내부 구간은 선형, 끝단도 선형 외삽 허용)
+        #  - limit_area='inside' 로 하면 끝단은 안 채움
+        #  - 여기선 끝단도 채우기 위해 limit_direction='both' 사용
+        g[target_col] = g[target_col].interpolate(
+            method="time", limit_direction="both"
+        )
+
+        # 원래 형태로 복귀
+        g = g.reset_index()
+        filled_list.append(g)
+
+    out2 = pd.concat(filled_list, axis=0).sort_values(["건물번호", "datetime"]).reset_index(drop=True)
+    return out2
+
+# 4. 학습/테스트에 적용
+train_df = interpolate_outliers_linear(
+    train_df,
+    RULES,
+    target_col="전력소비량(kWh)",
+    keep_original=False
+)
+이상치 제거
+이상치 보간과 같은 맥락입니다. 다만 기간이 길거나 값의 변화 폭이 커서 선형 보간을 했을 때 보간값이 실제값을 잘 대변하지 못할 것이라고 판단한 경우 제거를 선택했습니다.
+
+
+RULES = {
+    94: {"ranges": [("2024-07-26 00:00:00", "2024-08-05 23:59:59")]},
+    7:  {"exact":  ["2024-07-12 14:00:00", "2024-08-06 03:00:00"]},
+    10: {"exact":  ["2024-07-04 07:00:00", "2024-07-04 08:00:00"]},
+    67: {"before": "2024-07-28 01:00:00"},
+    53: {"ranges": [("2024-06-14 15:00:00", "2024-06-17 09:00:00"),
+                    ("2024-08-18 15:00:00", "2024-08-20 09:00:00")]},
+    17: {"ranges": [("2024-06-25 15:00:00", "2024-06-26 09:00:00")]},
+    26: {"ranges": [("2024-06-17 13:00:00", "2024-06-18 14:00:00")]},
+    57: {"ranges": [("2024-06-01 00:00:00", "2024-06-07 23:00:00")]},
+    70: {"ranges": [("2024-06-04 09:00:00", "2024-06-05 09:00:00")]},
+    77: {"exact":  ["2024-07-17 14:00:00", "2024-07-07 15:00:00"]},
+    83: {"exact":  ["2024-07-17 14:00:00"]},
+    92: {"ranges": [("2024-07-17 14:00:00", "2024-07-17 21:00:00")]},
+    97: {"ranges": [("2024-07-17 13:00:00", "2024-07-17 15:00:00")]},
+     9: {'exact': ['2024-06-12 10:00:00', '2024-06-12 11:00:00']},
+    17: {'ranges': [('2024-06-25 15:00:00', '2024-06-26 09:00:00')]},
+    25: {'ranges': [('2024-07-04 11:00:00', '2024-07-04 14:00:00')]},
+    29: {'ranges': [('2024-06-15 20:00:00', '2024-06-15 23:00:00'),
+                   ('2024-06-27 00:00:00', '2024-06-27 01:00:00')]},
+    68: {'ranges': [('2024-06-28 22:00:00', '2024-06-29 01:00:00')]},
+    88: {'ranges': [('2024-08-23 06:00:00', '2024-08-23 08:00:00')]},
+}
+
+import matplotlib.pyplot as plt
+import pandas as pd
+
+# Building 17 전체 데이터
+df_all = train_df[train_df["건물번호"] == 94].copy()
+
+# 전체 기간 전력 소비량 시각화
+plt.figure(figsize=(12, 5))
+plt.plot(df_all["datetime"], df_all["전력소비량(kWh)"], marker='o', markersize=3)
+plt.title("Total Power Consumption (kWh) over Time")
+plt.xlabel("Time")
+plt.ylabel("Power Consumption (kWh)")
+plt.grid(True)
+plt.xticks(rotation=45)
+plt.tight_layout()
+plt.show()
+
+# 특정 일자 데이터 (예: 2024-07-17)
+mask = (train_df["건물번호"] == 94) & \
+       (train_df["datetime"].dt.date == pd.Timestamp("2024-07-17").date())
+df_day = train_df.loc[mask]
+
+# 해당 일자 전력 소비량 시각화
+plt.figure(figsize=(12,5))
+plt.plot(df_day["datetime"], df_day["전력소비량(kWh)"], marker='o')
+plt.title("Daily Power Consumption (kWh) on 2024-07-17 (Building 17)")
+plt.xlabel("Time")
+plt.ylabel("Power Consumption (kWh)")
+plt.grid(True)
+plt.xticks(rotation=45)
+plt.tight_layout()
+plt.show()
+
+
+
+import pandas as pd
+
+# ============== 1) 준비 ==============
+train_df["datetime"] = pd.to_datetime(train_df["datetime"], errors="coerce")
+
+
+# ============== 2) 유틸 ==============
+def _to_ts(x):
+    """문자열/타임스탬프 혼용 입력 안전 변환."""
+    return pd.to_datetime(x)
+
+def build_mask_for_rule(df, bnum, rule):
+    """단일 건물(rule)에 대한 제거 마스크 생성."""
+    col_b = (df["건물번호"] == bnum)
+    masks = []
+
+    # ranges: 시작~종료 '포함' 제거
+    for start, end in rule.get("ranges", []):
+        s, e = _to_ts(start), _to_ts(end)
+        masks.append(col_b & (df["datetime"] >= s) & (df["datetime"] <= e))
+
+    # exact: 정확히 일치하는 시각들 제거
+    if "exact" in rule:
+        exact_times = pd.to_datetime(rule["exact"])
+        masks.append(col_b & (df["datetime"].isin(exact_times)))
+
+    # before: 기준 시각 '이전(<)' 전부 제거
+    if "before" in rule:
+        cutoff = _to_ts(rule["before"])
+        masks.append(col_b & (df["datetime"] < cutoff))
+
+    if not masks:
+        return pd.Series(False, index=df.index)
+    out = masks[0]
+    for m in masks[1:]:
+        out |= m
+    return out
+
+def build_all_masks(df, rules):
+    """모든 건물 규칙을 합산한 단일 마스크와, 건물별 카운트 리포트 반환."""
+    per_building_counts = {}
+    all_mask = pd.Series(False, index=df.index)
+    for bnum, rule in rules.items():
+        m = build_mask_for_rule(df, bnum, rule)
+        cnt = int(m.sum())
+        per_building_counts[bnum] = cnt
+        all_mask |= m
+    return all_mask, per_building_counts
+
+def print_report(n_before, per_counts, total_drop):
+    print("===== 제거 건수 (건물별) =====")
+    for bnum in sorted(per_counts.keys()):
+        print(f"🧹 {bnum:>2}번: {per_counts[bnum]}")
+    print(f"🧹 전체 제거 합계: {total_drop}")
+
+    n_after = n_before - total_drop
+    ratio = (total_drop / n_before * 100) if n_before > 0 else 0.0
+    print("\n===== 행수 변화 =====")
+    print(f"총 행수: {n_before:,} → {n_after:,} (△{total_drop:,}, {ratio:.2f}%)")
+
+def verify(df, rules):
+    """제거 후 검증(남은 건수=0이 정상)."""
+    print("\n===== 제거 검증(남은 건수) =====")
+    for bnum, rule in sorted(rules.items()):
+        m = build_mask_for_rule(df, bnum, rule)
+        print(f"{bnum}번 남은 건수(제거 대상): {int(m.sum())}")
+
+# ============== 3) 실행 ==============
+# 합산 마스크/카운트 생성
+to_drop_mask, per_counts = build_all_masks(train_df, RULES)
+
+# 리포트 출력
+n_before = len(train_df)
+ntotal = int(to_drop_mask.sum())
+print_report(n_before, per_counts, ntotal)
+
+# 실제 제거 적용
+train_df = train_df.loc[~to_drop_mask].reset_index(drop=True)
+print(f"\n✅ 제거 적용 후 train_df 크기: {train_df.shape}")
+
+# 검증(모든 항목이 0이어야 정상)
+verify(train_df, RULES)
+
+# ============== 2) 유틸 ==============
+def _to_ts(x):
+    """문자열/타임스탬프 혼용 입력 안전 변환."""
+    return pd.to_datetime(x)
+
+def build_mask_for_rule(df, bnum, rule):
+    """단일 건물(rule)에 대한 제거 마스크 생성."""
+    col_b = (df["건물번호"] == bnum)
+    masks = []
+
+    # ranges: 시작~종료 '포함' 제거
+    for start, end in rule.get("ranges", []):
+        s, e = _to_ts(start), _to_ts(end)
+        masks.append(col_b & (df["datetime"] >= s) & (df["datetime"] <= e))
+
+    # exact: 정확히 일치하는 시각들 제거
+    if "exact" in rule:
+        exact_times = pd.to_datetime(rule["exact"])
+        masks.append(col_b & (df["datetime"].isin(exact_times)))
+
+    # before: 기준 시각 '이전(<)' 전부 제거
+    if "before" in rule:
+        cutoff = _to_ts(rule["before"])
+        masks.append(col_b & (df["datetime"] < cutoff))
+
+    if not masks:
+        return pd.Series(False, index=df.index)
+    out = masks[0]
+    for m in masks[1:]:
+        out |= m
+    return out
+
+def build_all_masks(df, rules):
+    """모든 건물 규칙을 합산한 단일 마스크와, 건물별 카운트 리포트 반환."""
+    per_building_counts = {}
+    all_mask = pd.Series(False, index=df.index)
+    for bnum, rule in rules.items():
+        m = build_mask_for_rule(df, bnum, rule)
+        cnt = int(m.sum())
+        per_building_counts[bnum] = cnt
+        all_mask |= m
+    return all_mask, per_building_counts
+
+def print_report(n_before, per_counts, total_drop):
+    print("===== 제거 건수 (건물별) =====")
+    for bnum in sorted(per_counts.keys()):
+        print(f"🧹 {bnum:>2}번: {per_counts[bnum]}")
+    print(f"🧹 전체 제거 합계: {total_drop}")
+
+    n_after = n_before - total_drop
+    ratio = (total_drop / n_before * 100) if n_before > 0 else 0.0
+    print("\n===== 행수 변화 =====")
+    print(f"총 행수: {n_before:,} → {n_after:,} (△{total_drop:,}, {ratio:.2f}%)")
+
+def verify(df, rules):
+    """제거 후 검증(남은 건수=0이 정상)."""
+    print("\n===== 제거 검증(남은 건수) =====")
+    for bnum, rule in sorted(rules.items()):
+        m = build_mask_for_rule(df, bnum, rule)
+        print(f"{bnum}번 남은 건수(제거 대상): {int(m.sum())}")
+
+# ============== 3) 실행 ==============
+# 합산 마스크/카운트 생성
+to_drop_mask, per_counts = build_all_masks(train_df, RULES)
+
+# 리포트 출력
+n_before = len(train_df)
+ntotal = int(to_drop_mask.sum())
+print_report(n_before, per_counts, ntotal)
+
+# 실제 제거 적용
+train_df = train_df.loc[~to_drop_mask].reset_index(drop=True)
+===== 제거 건수 (건물별) =====
+🧹  7번: 2
+🧹  9번: 2
+🧹 10번: 2
+🧹 17번: 19
+🧹 25번: 4
+🧹 26번: 26
+🧹 29번: 6
+🧹 53번: 110
+🧹 57번: 168
+🧹 67번: 1369
+🧹 68번: 4
+🧹 70번: 25
+🧹 77번: 2
+🧹 83번: 1
+🧹 88번: 3
+🧹 92번: 8
+🧹 94번: 264
+🧹 97번: 3
+🧹 전체 제거 합계: 2018
+
+===== 행수 변화 =====
+총 행수: 204,000 → 201,982 (△2,018, 0.99%)
+
+✅ 제거 적용 후 train_df 크기: (201982, 56)
+
+===== 제거 검증(남은 건수) =====
+7번 남은 건수(제거 대상): 0
+9번 남은 건수(제거 대상): 0
+10번 남은 건수(제거 대상): 0
+17번 남은 건수(제거 대상): 0
+25번 남은 건수(제거 대상): 0
+26번 남은 건수(제거 대상): 0
+29번 남은 건수(제거 대상): 0
+53번 남은 건수(제거 대상): 0
+57번 남은 건수(제거 대상): 0
+67번 남은 건수(제거 대상): 0
+68번 남은 건수(제거 대상): 0
+70번 남은 건수(제거 대상): 0
+77번 남은 건수(제거 대상): 0
+83번 남은 건수(제거 대상): 0
+88번 남은 건수(제거 대상): 0
+92번 남은 건수(제거 대상): 0
+94번 남은 건수(제거 대상): 0
+97번 남은 건수(제거 대상): 0
+===== 제거 건수 (건물별) =====
+🧹  7번: 0
+🧹  9번: 0
+🧹 10번: 0
+🧹 17번: 0
+🧹 25번: 0
+🧹 26번: 0
+🧹 29번: 0
+🧹 53번: 0
+🧹 57번: 0
+🧹 67번: 0
+🧹 68번: 0
+🧹 70번: 0
+🧹 77번: 0
+🧹 83번: 0
+🧹 88번: 0
+🧹 92번: 0
+🧹 94번: 0
+🧹 97번: 0
+🧹 전체 제거 합계: 0
+
+===== 행수 변화 =====
+총 행수: 201,982 → 201,982 (△0, 0.00%)
+전력 통계량
+전력 통계량 변수를 validation 하기 위해서는 validation set인 마지막 일주일을 제외하고 통계량을 내어야 합니다.
+
+test에서는 train 셋의 모든 데이터로 통계량을 내어야 하겠죠.
+
+holiday를 기준으로 일,시간,달 별 평균점수와 표준편차를 파생변수로 활용하였습니다.
+
+추가적으로 전력에 관련된 파생변수는 이상치 처리가 완료된 후에 진행함으로써 통계량이 왜곡되지 않게 하였습니다.
+
+
+import pandas as pd
+import numpy as np
+
+TARGET = "전력소비량(kWh)"
+
+STAT_COLS = [
+    "holiday_hour_mean","holiday_hour_std",
+    "holiday_month_mean","holiday_month_std",
+    "holiday_day_mean","holiday_day_std",
+]
+
+# -----------------------------
+# 키/타입 정규화
+# -----------------------------
+def _norm_keys(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    out["datetime"] = pd.to_datetime(out["datetime"], errors="coerce")
+    if "month" not in out.columns:
+        out["month"] = out["datetime"].dt.month
+    if "요일" in out.columns:
+        out["요일"] = out["요일"].astype(str)
+    if "time" in out.columns:
+        def to_hour(v):
+            if hasattr(v, "hour"): return v.hour
+            return v
+        out["time"] = pd.to_numeric(out["time"].apply(to_hour), errors="coerce").fillna(-1).astype(int)
+    return out
+
+# -----------------------------
+# 통계 피처 생성 (src로 통계, df들에 merge)
+# -----------------------------
+def _add_stats_from_src(src: pd.DataFrame, train_df: pd.DataFrame, test_df: pd.DataFrame):
+    # 0) 재실행 보호: 기존 통계 컬럼 삭제
+    train_df = train_df.drop(columns=[c for c in STAT_COLS if c in train_df.columns], errors="ignore")
+    test_df  = test_df.drop(columns=[c for c in STAT_COLS if c in test_df.columns],  errors="ignore")
+
+    # 기준 1: (건물번호, true_holiday, time)
+    hour_stats = (
+        src.groupby(['건물번호','true_holiday','time'])[TARGET]
+           .agg(['mean','std']).reset_index()
+           .rename(columns={'mean':'holiday_hour_mean','std':'holiday_hour_std'})
+    )
+    hour_stats['holiday_hour_std'] = hour_stats['holiday_hour_std'].fillna(0)
+    train_df = train_df.merge(hour_stats, on=['건물번호','true_holiday','time'], how='left')
+    test_df  = test_df.merge(hour_stats,  on=['건물번호','true_holiday','time'],  how='left')
+
+    # 기준 2: (건물번호, true_holiday, month)
+    month_stats = (
+        src.groupby(['건물번호','true_holiday','month'])[TARGET]
+           .agg(['mean','std']).reset_index()
+           .rename(columns={'mean':'holiday_month_mean','std':'holiday_month_std'})
+    )
+    month_stats['holiday_month_std'] = month_stats['holiday_month_std'].fillna(0)
+    train_df = train_df.merge(month_stats, on=['건물번호','true_holiday','month'], how='left')
+    test_df  = test_df.merge(month_stats,  on=['건물번호','true_holiday','month'],  how='left')
+
+    # 기준 3: (건물번호, true_holiday, 요일)
+    day_stats = (
+        src.groupby(['건물번호','true_holiday','요일'])[TARGET]
+           .agg(['mean','std']).reset_index()
+           .rename(columns={'mean':'holiday_day_mean','std':'holiday_day_std'})
+    )
+    day_stats['holiday_day_std'] = day_stats['holiday_day_std'].fillna(0)
+    train_df = train_df.merge(day_stats, on=['건물번호','true_holiday','요일'], how='left')
+    test_df  = test_df.merge(day_stats,  on=['건물번호','true_holiday','요일'],  how='left')
+
+    # (추가) mean 대치 규칙: (건물번호, true_holiday) mean으로 보강
+    bth_mean = (
+        src.groupby(['건물번호','true_holiday'])[TARGET]
+           .mean().reset_index().rename(columns={TARGET:'bth_mean'})
+    )
+    def _attach_bth_mean(df):
+        return df.merge(bth_mean, on=['건물번호','true_holiday'], how='left')
+    train_df = _attach_bth_mean(train_df)
+    test_df  = _attach_bth_mean(test_df)
+
+    for mean_col in ['holiday_hour_mean','holiday_month_mean','holiday_day_mean']:
+        if mean_col in train_df.columns:
+            train_df[mean_col] = train_df[mean_col].combine_first(train_df['bth_mean'])
+        if mean_col in test_df.columns:
+            test_df[mean_col]  = test_df[mean_col].combine_first(test_df['bth_mean'])
+
+    train_df.drop(columns=['bth_mean'], inplace=True)
+    test_df.drop(columns=['bth_mean'], inplace=True)
+
+    # std는 숫자 고정
+    for col in ["holiday_hour_std","holiday_month_std","holiday_day_std"]:
+        train_df[col] = pd.to_numeric(train_df[col], errors="coerce").fillna(0.0)
+        test_df[col]  = pd.to_numeric(test_df[col],  errors="coerce").fillna(0.0)
+
+    return train_df, test_df
+
+# -----------------------------
+# 메인 통합 함수 (보간 제거 버전)
+# -----------------------------
+def build_datasets(
+    base_train: pd.DataFrame,
+    base_test: pd.DataFrame,
+    val_start: pd.Timestamp,
+    target_col: str = TARGET
+):
+    # 0) 원본 보존
+    bt = base_train.copy()
+    bs = base_test.copy()
+
+    # 1) 키 정규화
+    bt = _norm_keys(bt)
+    bs = _norm_keys(bs)
+
+    # -------- final_* : 전체 train으로 통계 계산 --------
+    final_train_in  = bt.copy()
+    final_test_in   = bs.copy()
+    final_src       = bt.copy()  # 전체 train
+    final_train, final_test = _add_stats_from_src(final_src, final_train_in, final_test_in)
+
+    # -------- val_* : val_start 이전 데이터로만 통계 계산 --------
+    val_train_in  = bt.copy()
+    val_test_in   = bs.copy()
+    val_src       = bt[val_train_in["datetime"] < val_start].copy()
+    val_train, val_test = _add_stats_from_src(val_src, val_train_in, val_test_in)
+    return final_train, final_test, val_train, val_test
+
+
+final_train, final_test, val_train, val_test = build_datasets(
+    base_train=train_df,   # 원본 train
+    base_test=test_df,     # 원본 test
+    val_start=pd.Timestamp("2024-08-18 00:00:00"),
+)
+
+# DataFrame일 경우
+
+final_train.columns
+Index(['datetime', '건물번호', '기온(°C)', '강수량(mm)', '풍속(m/s)', '습도(%)', '일조(hr)',
+       '일사(MJ/m2)', '전력소비량(kWh)', '건물유형', '연면적(m2)', '냉방면적(m2)', '태양광용량(kW)',
+       'ESS저장용량(kWh)', 'PCS용량(kW)', 'month', 'day', 'time', '요일', 'is_월',
+       'is_화', 'is_수', 'is_목', 'is_금', 'is_토', 'is_일', 'is_weekend',
+       'is_holiday', 'is_mart_holiday', 'summer_cos', 'summer_sin', 'hour_sin',
+       'hour_cos', '기온_4일_이동평균', '습도_4일_이동평균', '기온_7일_이동평균', '습도_7일_이동평균',
+       'avg_temp', 'max_temp', 'min_temp', 'temp_diff', 'temp_category',
+       'weather', 'CDH', 'THI_continuous', 'THI_grade', 'WC', 'THIDH_12h',
+       'THI_lag_1h', 'THI_lag_3h', 'THI_lag_6h', 'THI_day_max', 'THI_day_mean',
+       'THI_heatwave_6h', 'CDD_day', 'true_holiday', 'holiday_hour_mean',
+       'holiday_hour_std', 'holiday_month_mean', 'holiday_month_std',
+       'holiday_day_mean', 'holiday_day_std'],
+      dtype='object')
+
+COLS_TO_DROP = [
+    "datetime", "연면적(m2)", "냉방면적(m2)",
+    "태양광용량(kW)", "ESS저장용량(kWh)", "PCS용량(kW)",
+    "건물유형", "요일", "일조(hr)", "일사(MJ/m2)", "건물번호", '전력소비량(kWh)'
+]
+
+# 컬럼 제거
+final_train_dropped = final_train.drop(columns=COLS_TO_DROP, errors="ignore")
+
+# 결과 출력
+print(final_train_dropped.columns)
+Index(['기온(°C)', '강수량(mm)', '풍속(m/s)', '습도(%)', 'month', 'day', 'time', 'is_월',
+       'is_화', 'is_수', 'is_목', 'is_금', 'is_토', 'is_일', 'is_weekend',
+       'is_holiday', 'is_mart_holiday', 'summer_cos', 'summer_sin', 'hour_sin',
+       'hour_cos', '기온_4일_이동평균', '습도_4일_이동평균', '기온_7일_이동평균', '습도_7일_이동평균',
+       'avg_temp', 'max_temp', 'min_temp', 'temp_diff', 'temp_category',
+       'weather', 'CDH', 'THI_continuous', 'THI_grade', 'WC', 'THIDH_12h',
+       'THI_lag_1h', 'THI_lag_3h', 'THI_lag_6h', 'THI_day_max', 'THI_day_mean',
+       'THI_heatwave_6h', 'CDD_day', 'true_holiday', 'holiday_hour_mean',
+       'holiday_hour_std', 'holiday_month_mean', 'holiday_month_std',
+       'holiday_day_mean', 'holiday_day_std'],
+      dtype='object')
+모델 학습
+Validation 최적의 변수 찾기
+총 50개의 변수가 준비되었습니다. 그중 ["기온(°C)", "강수량(mm)", "풍속(m/s)", "습도(%)", "true_holiday"] 변수는 필수 변수로써 제거를 할 수 없습니다. 그외의 변수들은 건물 별로 악영향을 미칠수도 있고 성능 향상에 도움이 되는 변수일 수도 있습니다. 그래서 각각의 변수별로 최적의 변수조합을 찾아주게 위해서 후진대입법을 활용했습니다. 하지만 1개의 변수를 지울때마다 6시간 이상인 긴 시간이 소요되기 때문에 optimal한 최적점은 찾을 수 없었습니다. 그래서 실질적으로는 각건물당 하나의 변수를 제거하게 되었습니다. 즉 더욱 성능 개선의 여지가 남아있다고 할 수 있습니다.
+
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import torch
+from pathlib import Path
+from typing import Iterable, Tuple, Dict, Any, List, Optional
+from tqdm import tqdm
+from tabpfn import TabPFNRegressor
+
+# =========================
+# Config
+# =========================
+TARGET_COL = "전력소비량(kWh)"
+DEFAULT_VAL_HORIZON = 168
+COLS_TO_DROP = [
+    "datetime", "연면적(m2)", "냉방면적(m2)",
+    "태양광용량(kW)", "ESS저장용량(kWh)", "PCS용량(kW)",
+    "건물유형", "요일", "일조(hr)", "일사(MJ/m2)", "건물번호",
+]
+DEFAULT_LOCK_FEATURES = ["기온(°C)", "강수량(mm)", "풍속(m/s)", "습도(%)", "true_holiday"]
+
+# =========================
+# Utils
+# =========================
+def set_seeds(seed: int = 42) -> None:
+    import random
+    np.random.seed(seed); random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+def pick_device(arg: str) -> str:
+    a = arg.lower()
+    if a in ("auto", "auto:cuda"):
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    if a in ("cuda", "gpu"):
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    return "cpu"
+
+def hard_reset_cuda():
+    try:
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+            if hasattr(torch.cuda, "ipc_collect"):
+                torch.cuda.ipc_collect()
+            torch.cuda.reset_peak_memory_stats()
+    except Exception:
+        pass
+    import gc; gc.collect()
+
+def free_cuda():
+    try:
+        torch.cuda.empty_cache()
+    except Exception:
+        pass
+    import gc; gc.collect()
+
+def prepare_time_sorted(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    if isinstance(out.index, pd.DatetimeIndex):
+        return out.sort_index()
+    if "datetime" in out.columns:
+        if not np.issubdtype(out["datetime"].dtype, np.datetime64):
+            out["datetime"] = pd.to_datetime(out["datetime"], errors="coerce")
+        return out.sort_values("datetime")
+    return out
+
+def ensure_time_index(df_like: pd.DataFrame) -> pd.Index:
+    if isinstance(df_like.index, pd.DatetimeIndex):
+        return df_like.index
+    if "datetime" in df_like.columns:
+        return pd.to_datetime(df_like["datetime"], errors="coerce")
+    return pd.RangeIndex(len(df_like))
+
+def encode_like_train(X_train: pd.DataFrame, X_other: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    X_train_enc = X_train.copy()
+    X_other_enc = X_other.copy()
+    obj_cols = X_train_enc.select_dtypes(include="object").columns.tolist()
+    cat_cols = X_train_enc.select_dtypes(include="category").columns.tolist()
+    cat_candidates = list(set(obj_cols) | set(cat_cols))
+    for col in cat_candidates:
+        X_train_enc[col] = X_train_enc[col].astype("category")
+        train_cats = X_train_enc[col].cat.categories.tolist()
+        X_other_enc[col] = X_other_enc[col].astype("category").cat.set_categories(train_cats)
+        X_train_enc[col] = X_train_enc[col].cat.codes
+        X_other_enc[col] = X_other_enc[col].cat.codes
+    return X_train_enc, X_other_enc
+
+def align_to_train_columns(X_train_enc: pd.DataFrame,
+                           X_other_enc: pd.DataFrame,
+                           fill_with: str = "median") -> pd.DataFrame:
+    X_other = X_other_enc.copy()
+    for c in X_train_enc.columns:
+        if c not in X_other.columns:
+            if pd.api.types.is_numeric_dtype(X_train_enc[c]):
+                if fill_with == "median":
+                    vals = pd.to_numeric(X_train_enc[c], errors="coerce").values
+                    v = np.nanmedian(vals)
+                    if np.isnan(v): v = 0.0
+                else:
+                    v = 0.0
+            else:
+                v = -1
+            X_other[c] = v
+    extra = [c for c in X_other.columns if c not in X_train_enc.columns]
+    if extra:
+        X_other = X_other.drop(columns=extra)
+    return X_other[X_train_enc.columns]
+
+def get_building_slices(train_df: pd.DataFrame, test_df: pd.DataFrame, bld: int
+    ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    train_b = prepare_time_sorted(train_df[train_df["건물번호"] == bld].copy()).reset_index(drop=True)
+    test_b  = prepare_time_sorted(test_df[test_df["건물번호"] == bld].copy()).reset_index(drop=True)
+    tr_drop = [c for c in COLS_TO_DROP if c in train_b.columns]
+    te_drop = [c for c in COLS_TO_DROP if c in test_b.columns]
+    train_model = train_b.drop(columns=tr_drop)
+    test_model  = test_b.drop(columns=te_drop)
+    return train_b, test_b, train_model, test_model
+
+# =========================
+# Core train/predict
+# =========================
+def tabpfn_fit_predict(X_train: pd.DataFrame, y_train: pd.Series,
+                       X_val: pd.DataFrame, y_val: pd.Series,
+                       device: str) -> Tuple[float, np.ndarray]:
+    X_train_enc, X_val_enc = encode_like_train(X_train, X_val)
+    X_val_enc = align_to_train_columns(X_train_enc, X_val_enc, fill_with="median")
+    model = None
+    try:
+        model = TabPFNRegressor(random_state=42, device=device, ignore_pretraining_limits=True)
+        model.fit(X_train_enc, y_train.values)
+        y_val_pred = np.asarray(model.predict(X_val_enc))
+        # SMAPE
+        denom = (np.abs(y_val.values) + np.abs(y_val_pred)) / 2.0
+        diff = np.abs(y_val_pred - y_val.values) / denom
+        diff[denom == 0] = 0.0
+        smape_val = float(100 * np.mean(diff))
+        return smape_val, y_val_pred
+    finally:
+        del model
+        free_cuda()
+
+def tabpfn_predict_test(X_train: pd.DataFrame, y_train: pd.Series,
+                        X_test: pd.DataFrame, device: str) -> np.ndarray:
+    X_train_enc, X_test_enc = encode_like_train(X_train, X_test)
+    X_test_enc = align_to_train_columns(X_train_enc, X_test_enc, fill_with="median")
+    model = None
+    try:
+        model = TabPFNRegressor(random_state=42, device=device, ignore_pretraining_limits=True)
+        model.fit(X_train_enc, y_train.values)
+        return np.asarray(model.predict(X_test_enc))
+    finally:
+        del model
+        free_cuda()
+
+# =========================
+# Feature selection (single-pass)
+# =========================
+def greedy_backward_search(train_model: pd.DataFrame,
+                           lock_features: List[str],
+                           device: str,
+                           val_horizon: int,
+                           tol: float = 0.0,
+                           verbose: bool = False,
+                           bld: Optional[int] = None,
+                           use_progress: bool = True) -> Dict[str, Any]:
+    assert TARGET_COL in train_model.columns, "TARGET_COL missing."
+    if len(train_model) <= val_horizon:
+        raise ValueError(f"행이 너무 적습니다. (len={len(train_model)})")
+
+    train_split_df = train_model.iloc[:-val_horizon].copy()
+    val_split_df   = train_model.iloc[-val_horizon:].copy()
+
+    X_all = [c for c in train_split_df.columns if c != TARGET_COL]
+    X_train_full = train_split_df[X_all]; y_train = train_split_df[TARGET_COL]
+    X_val_full   = val_split_df[X_all];   y_val   = val_split_df[TARGET_COL]
+
+    baseline_smape, _ = tabpfn_fit_predict(X_train_full, y_train, X_val_full, y_val, device=device)
+    history = [{"step": 0, "removed": None, "val_smape": float(baseline_smape), "n_features": len(X_all)}]
+
+    candidates = [c for c in X_all if (c not in lock_features)]
+    if not candidates:
+        return {
+            "baseline_smape": float(baseline_smape),
+            "best_smape": float(baseline_smape),
+            "best_features": list(X_all),
+            "history": history,
+            "splits": {"train_idx": train_split_df.index, "val_idx": val_split_df.index}
+        }
+
+    best_feat = None
+    best_smape = baseline_smape
+    iterator = candidates if not use_progress else tqdm(
+        candidates, desc=f"[b{bld}] single-pass (try {len(candidates)})",
+        ncols=100, leave=False, position=1,
+    )
+
+    for feat in iterator:
+        trial_feats = [f for f in X_all if f != feat]
+        X_tr = X_train_full[trial_feats]
+        X_vl = X_val_full[trial_feats]
+        try:
+            trial_smape, _ = tabpfn_fit_predict(X_tr, y_train, X_vl, y_val, device=device)
+        except Exception:
+            if use_progress: iterator.set_postfix_str("err")
+            continue
+
+        delta = baseline_smape - trial_smape
+        if use_progress:
+            iterator.set_postfix_str(f"-{feat} → {trial_smape:.4f}% (Δ {delta:+.4f})")
+
+        if (delta >= tol) and (trial_smape < best_smape):
+            best_smape = trial_smape
+            best_feat = feat
+
+    if use_progress and hasattr(iterator, "close"):
+        iterator.close()
+
+    if (best_feat is None):
+        best_features = list(X_all)
+    else:
+        best_features = [f for f in X_all if f != best_feat]
+        history.append({
+            "step": 1, "removed": best_feat,
+            "val_smape": float(best_smape), "n_features": len(best_features)
+        })
+
+    return {
+        "baseline_smape": float(baseline_smape),
+        "best_smape": float(best_smape),
+        "best_features": best_features,
+        "history": history,
+        "splits": {"train_idx": train_split_df.index, "val_idx": val_split_df.index}
+    }
+
+# =========================
+# Plot (optional)
+# =========================
+def plot_building_series(bld: int,
+                         train_b_raw: pd.DataFrame,
+                         test_b_raw: pd.DataFrame,
+                         y_val_pred: np.ndarray,
+                         y_test_pred: np.ndarray,
+                         splits: Dict[str, Any],
+                         val_smape: float,
+                         save_dir: str | None = None) -> None:
+    train_part = train_b_raw.loc[splits["train_idx"]]
+    val_part   = train_b_raw.loc[splits["val_idx"]]
+    x_train = ensure_time_index(train_part)
+    x_val   = ensure_time_index(val_part)
+    x_test  = ensure_time_index(test_b_raw)
+    train_y = train_part[TARGET_COL] if TARGET_COL in train_part.columns else None
+    val_y   = val_part[TARGET_COL] if TARGET_COL in val_part.columns else None
+    val_pred  = pd.Series(y_val_pred, index=x_val)
+    test_pred = pd.Series(y_test_pred, index=x_test)
+
+    import matplotlib.pyplot as plt
+    fig, axs = plt.subplots(3, 1, figsize=(12, 10), sharex=False)
+    fig.suptitle(f"건물 {bld} | VAL SMAPE: {val_smape:.2f}%")
+    if train_y is not None:
+        axs[0].plot(x_train, train_y.values, label="Train Actual")
+    axs[0].set_title("Train (Actual only)"); axs[0].set_ylabel(TARGET_COL); axs[0].grid(True); axs[0].legend()
+
+    if val_y is not None:
+        axs[1].plot(x_val, val_y.values, label="Val Actual")
+    axs[1].plot(x_val, val_pred.values, label="Val Pred")
+    axs[1].set_title("Validation (Actual vs Pred)"); axs[1].set_ylabel(TARGET_COL); axs[1].grid(True); axs[1].legend()
+
+    axs[2].plot(x_test, test_pred.values, label="Test Pred")
+    axs[2].set_title("Test (Pred only)"); axs[2].set_ylabel(TARGET_COL); axs[2].grid(True); axs[2].legend()
+    plt.tight_layout(rect=[0,0,1,0.96])
+
+    if save_dir is not None:
+        Path(save_dir).mkdir(parents=True, exist_ok=True)
+        out_path = Path(save_dir) / f"building_{bld}.png"
+        plt.savefig(out_path, dpi=150)
+        plt.close(fig)
+    else:
+        plt.show()
+
+# =========================
+# Monitoring core
+# =========================
+def parse_buildings(spec: str) -> Iterable[int]:
+    spec = spec.replace(" ", "")
+    result: List[int] = []
+    for p in spec.split(","):
+        if not p: continue
+        if "-" in p:
+            a, b = p.split("-", 1)
+            a, b = int(a), int(b)
+            result.extend(range(min(a, b), max(a, b) + 1))
+        else:
+            result.append(int(p))
+    return sorted(set(result))
+
+def run_monitoring(train_df: pd.DataFrame, test_df: pd.DataFrame,
+                   buildings: Iterable[int],
+                   device: str,
+                   save_dir: str | None,
+                   do_feature_search: bool,
+                   lock_features: List[str],
+                   tol: float,
+                   summary_csv_name: str = "smape_summary.csv",
+                   *,
+                   fs_verbose: bool = True,
+                   fs_progress: bool = True,
+                   aggressive_cuda_reset: bool = True,
+                   no_plots: bool = False,
+                   log_dir: Optional[str] = None,
+                   val_horizon: int = DEFAULT_VAL_HORIZON) -> Dict[str, Any]:
+    records = []
+    fs_records = []
+
+    out_dir = Path(save_dir) if save_dir is not None else Path(".")
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    fs_dir = Path(log_dir) if log_dir else (out_dir / "feature_search")
+    fs_dir.mkdir(parents=True, exist_ok=True)
+
+    pbar = tqdm(buildings, desc="Processing buildings", unit="bld", ncols=100)
+
+    for b in pbar:
+        try:
+            if aggressive_cuda_reset:
+                hard_reset_cuda()
+
+            train_b_raw, test_b_raw, train_b_model, test_b_model = get_building_slices(train_df, test_df, b)
+            if len(train_b_model) == 0 and len(test_b_model) == 0:
+                records.append({"building": b, "val_smape": np.nan, "note": "no data"})
+                fs_records.append({"building": b, "baseline_smape": np.nan, "best_smape": np.nan,
+                                   "improve_abs": np.nan, "improve_pct": np.nan, "n_features_best": np.nan,
+                                   "selected_features": ""})
+                pbar.set_postfix_str(f"b{b}: no data")
+                if aggressive_cuda_reset: hard_reset_cuda()
+                continue
+
+            if len(train_b_model) <= val_horizon:
+                records.append({"building": b, "val_smape": np.nan, "note": "too few rows"})
+                fs_records.append({"building": b, "baseline_smape": np.nan, "best_smape": np.nan,
+                                   "improve_abs": np.nan, "improve_pct": np.nan, "n_features_best": np.nan,
+                                   "selected_features": ""})
+                pbar.set_postfix_str(f"b{b}: few rows")
+                if aggressive_cuda_reset: hard_reset_cuda()
+                continue
+
+            if do_feature_search:
+                fs_result = greedy_backward_search(
+                    train_b_model, lock_features,
+                    device=device, val_horizon=val_horizon, tol=tol,
+                    verbose=fs_verbose, bld=b, use_progress=fs_progress
+                )
+
+                baseline_smape = fs_result["baseline_smape"]
+                best_smape     = fs_result["best_smape"]
+                selected_feats = fs_result["best_features"]
+                improve_abs = baseline_smape - best_smape
+                improve_pct = (improve_abs / baseline_smape * 100.0) if np.isfinite(baseline_smape) and baseline_smape != 0 else np.nan
+
+                fs_records.append({
+                    "building": b,
+                    "baseline_smape": baseline_smape,
+                    "best_smape": best_smape,
+                    "improve_abs": improve_abs,
+                    "improve_pct": improve_pct,
+                    "n_features_best": len(selected_feats),
+                    "selected_features": ",".join(selected_feats)
+                })
+
+                tr_idx = fs_result["splits"]["train_idx"]
+                vl_idx = fs_result["splits"]["val_idx"]
+                tr_df  = train_b_model.loc[tr_idx]
+                vl_df  = train_b_model.loc[vl_idx]
+                X_train = tr_df[selected_feats];   y_train = tr_df[TARGET_COL]
+                X_val   = vl_df[selected_feats];   y_val   = vl_df[TARGET_COL]
+
+                best_val_smape, y_val_pred = tabpfn_fit_predict(X_train, y_train, X_val, y_val, device=device)
+                X_test = test_b_model[selected_feats] if TARGET_COL not in test_b_model.columns else test_b_model.drop(columns=[TARGET_COL])[selected_feats]
+                y_test_pred = tabpfn_predict_test(X_train, y_train, X_test, device=device)
+
+                if not no_plots:
+                    plot_building_series(b, train_b_raw, test_b_raw, y_val_pred, y_test_pred,
+                                         splits=fs_result["splits"], val_smape=best_val_smape, save_dir=save_dir)
+
+                del tr_df, vl_df, X_train, X_val, y_train, y_val, X_test, y_val_pred, y_test_pred
+                if aggressive_cuda_reset: hard_reset_cuda()
+
+                records.append({"building": b, "val_smape": best_val_smape, "note": "feature_search"})
+                pbar.set_postfix_str(f"b{b}: FS {best_val_smape:.2f}% (Δ {improve_abs:+.2f})")
+
+            else:
+                train_split_df = train_b_model.iloc[:-val_horizon]
+                val_split_df   = train_b_model.iloc[-val_horizon:]
+                X_train = train_split_df.drop(columns=[TARGET_COL]); y_train = train_split_df[TARGET_COL]
+                X_val   = val_split_df.drop(columns=[TARGET_COL]);   y_val   = val_split_df[TARGET_COL]
+
+                full_val_smape, y_val_pred = tabpfn_fit_predict(X_train, y_train, X_val, y_val, device=device)
+                X_test = test_b_model.drop(columns=[TARGET_COL]) if TARGET_COL in test_b_model.columns else test_b_model.copy()
+                y_test_pred = tabpfn_predict_test(X_train, y_train, X_test, device=device)
+
+                if not no_plots:
+                    plot_building_series(b, train_b_raw, test_b_raw, y_val_pred, y_test_pred,
+                                         splits={"train_idx": train_split_df.index, "val_idx": val_split_df.index},
+                                         val_smape=full_val_smape, save_dir=save_dir)
+
+                del train_split_df, val_split_df, X_train, X_val, y_train, y_val, X_test, y_val_pred, y_test_pred
+                if aggressive_cuda_reset: hard_reset_cuda()
+
+                records.append({"building": b, "val_smape": full_val_smape, "note": "full_features"})
+
+        except Exception as e:
+            print(f"❌ 건물 {b} 처리 중 오류: {e}")
+            records.append({"building": b, "val_smape": np.nan, "note": f"error: {e}"})
+            if do_feature_search:
+                fs_records.append({"building": b, "baseline_smape": np.nan, "best_smape": np.nan,
+                                   "improve_abs": np.nan, "improve_pct": np.nan, "n_features_best": np.nan,
+                                   "selected_features": ""})
+        finally:
+            if aggressive_cuda_reset:
+                hard_reset_cuda()
+
+    # summaries
+    df_sum = pd.DataFrame(records).sort_values("building")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    df_sum.to_csv(out_dir / summary_csv_name, index=False, encoding="utf-8-sig")
+    mean_smape = df_sum["val_smape"].dropna().mean()
+    print(f"\n📊 SMAPE summary saved to: {out_dir/summary_csv_name}")
+    print(f"✅ Overall mean SMAPE: {'N/A' if np.isnan(mean_smape) else f'{mean_smape:.4f}%'}")
+
+    result = {"summary": df_sum}
+    if do_feature_search:
+        df_fs = pd.DataFrame(fs_records).sort_values("building")
+        df_fs.to_csv(out_dir / "feature_selection_summary.csv", index=False, encoding="utf-8-sig")
+        base_mean = df_fs["baseline_smape"].dropna().mean()
+        best_mean = df_fs["best_smape"].dropna().mean()
+        improve_mean_abs = (base_mean - best_mean) if (np.isfinite(base_mean) and np.isfinite(best_mean)) else np.nan
+        improve_mean_pct = (improve_mean_abs / base_mean * 100.0) if (np.isfinite(base_mean) and base_mean != 0) else np.nan
+        pd.DataFrame([{
+            "baseline_mean_smape": base_mean,
+            "best_mean_smape": best_mean,
+            "improve_mean_abs": improve_mean_abs,
+            "improve_mean_pct": improve_mean_pct
+        }]).to_csv(out_dir / "feature_selection_overall.csv", index=False, encoding="utf-8-sig")
+        print(f"🧪 FS summary saved to: {out_dir/'feature_selection_summary.csv'}")
+        print(f"🧾 FS overall saved to: {out_dir/'feature_selection_overall.csv'}")
+        result["fs_summary"] = df_fs
+    return result
+
+# =========================
+# 최종 실행 함수 (CSV 경로 OR DF 입력 지원)
+# =========================
+def colab_run_monitoring(
+    train,                      # str(csv 경로) 또는 pd.DataFrame
+    test,                       # str(csv 경로) 또는 pd.DataFrame
+    buildings: str = "1-100",
+    save_dir: str = "./figs40",
+    device: str = "auto",
+    do_feature_search: bool = True,
+    lock_features: Optional[List[str]] = None,
+    tol: float = 0.0,
+    val_horizon: int = DEFAULT_VAL_HORIZON,
+    fs_verbose: bool = False,
+    fs_progress: bool = True,
+    aggressive_cuda_reset: bool = True,
+    no_plots: bool = True,
+    seed: int = 42,
+) -> Dict[str, Any]:
+    """
+    코랩 셀에서 한 줄로 실행하는 엔트리.
+    - train/test: csv 경로(str) 또는 DataFrame
+    - 결과 CSV와 이미지가 save_dir에 저장됨
+    - 반환값: {'summary': DataFrame, (do_feature_search=True이면) 'fs_summary': DataFrame}
+    """
+    set_seeds(seed)
+    device = pick_device(device)
+    print(f"Using device: {device}")
+
+    # Load
+    if isinstance(train, str):
+        train_df = pd.read_csv(train, encoding="utf-8-sig")
+    else:
+        train_df = train.copy()
+    if isinstance(test, str):
+        test_df  = pd.read_csv(test,  encoding="utf-8-sig")
+    else:
+        test_df = test.copy()
+
+    # datetime 보장
+    if "datetime" in train_df.columns:
+        train_df["datetime"] = pd.to_datetime(train_df["datetime"], errors="coerce")
+    if "datetime" in test_df.columns:
+        test_df["datetime"] = pd.to_datetime(test_df["datetime"], errors="coerce")
+
+    blds = list(parse_buildings(buildings))
+    print(f"Buildings: {blds[0]}..{blds[-1]} (len={len(blds)})")
+    if lock_features is None:
+        lock_features = list(DEFAULT_LOCK_FEATURES)
+
+    # 잠금 피처 확인
+    missing_locked = [f for f in lock_features if f not in train_df.columns]
+    if missing_locked:
+        print(f"⚠️ Locked features not found in train_df: {missing_locked}")
+
+    return run_monitoring(
+        train_df=train_df,
+        test_df=test_df,
+        buildings=blds,
+        device=device,
+        save_dir=save_dir,
+        do_feature_search=do_feature_search,
+        lock_features=lock_features,
+        tol=tol,
+        summary_csv_name="smape_summary.csv",
+        fs_verbose=fs_verbose,
+        fs_progress=fs_progress,
+        aggressive_cuda_reset=aggressive_cuda_reset,
+        no_plots=no_plots,
+        log_dir=None,
+        val_horizon=val_horizon
+    )
+
+res = colab_run_monitoring(
+    train= val_train,
+    test= val_test,
+    buildings="1-100",
+    save_dir="./figs",
+    device="cuda",
+    do_feature_search=True,
+    tol=0.0,
+    val_horizon=168,
+    fs_progress=True,
+    aggressive_cuda_reset=True,
+    no_plots=True,   # 그래프 저장/표시 끌 때
+    seed=42
+)
+res["summary"].head()
+Test 건물 별 seed ensemble 100회
+딥러닝 모델은 언제나 초기치에 영향을 받습니다. 더구나 데이터가 적은 경우느 편향이 심하죠. 한 건물당 train 데이터가 2000개 조금 넘는 데이터가 있습니다. 이상치를 제거하고 나면 더 적은 건물도 있습니다. 따라서 이러한 편향을 최소화 하기 위해서 seed ensemble을 활용했습니다. 같은 모델에 대하여 seed만 바꾸고 완전히 같은 환경에서 100회를 학습하고 test하는 방식입니다. [3]
+
+[3] Ganaie, M. A., Hu, M., Malik, A. K., Tanveer, M., & Suganthan, P. N. (2022). Ensemble deep learning: A review. Engineering Applications of Artificial Intelligence, 115, 105151.
+
+
+from pathlib import Path
+from typing import List, Dict, Optional, Tuple, Any, Iterable
+import warnings, numpy as np, pandas as pd
+from tqdm import tqdm
+from tabpfn import TabPFNRegressor
+
+TARGET_COL = "전력소비량(kWh)"
+COLS_TO_DROP = [
+    "datetime", "연면적(m2)", "냉방면적(m2)",
+    "태양광용량(kW)", "ESS저장용량(kWh)", "PCS용량(kW)",
+    "건물유형", "요일", "일조(hr)", "일사(MJ/m2)", "건물번호",
+]
+
+# ---------------- Utils ----------------
+def _pick_device(device: str) -> str:
+    try:
+        import torch
+        if device.lower() in ("cuda", "gpu"):
+            return "cuda" if torch.cuda.is_available() else "cpu"
+        if device.lower().startswith("auto"):
+            return "cuda" if torch.cuda.is_available() else "cpu"
+    except Exception:
+        pass
+    return "cpu"
+
+def _prepare_time_sorted(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    if isinstance(out.index, pd.DatetimeIndex): return out.sort_index()
+    if "datetime" in out.columns:
+        if not np.issubdtype(out["datetime"].dtype, np.datetime64):
+            out["datetime"] = pd.to_datetime(out["datetime"], errors="coerce")
+        return out.sort_values("datetime")
+    return out
+
+def _encode_like_train(X_train: pd.DataFrame, X_other: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    Xt = X_train.copy(); Xo = X_other.copy()
+    obj_cols = Xt.select_dtypes(include="object").columns.tolist()
+    cat_cols = Xt.select_dtypes(include="category").columns.tolist()
+    cats = list(set(obj_cols) | set(cat_cols))
+    for c in cats:
+        Xt[c] = Xt[c].astype("category")
+        cats_train = Xt[c].cat.categories.tolist()
+        Xo[c] = Xo[c].astype("category").cat.set_categories(cats_train)
+        Xt[c] = Xt[c].cat.codes
+        Xo[c] = Xo[c].cat.codes
+    return Xt, Xo
+
+def _align_to_train_columns(X_train_enc: pd.DataFrame, X_other_enc: pd.DataFrame, fill_with: str="median") -> pd.DataFrame:
+    Xo = X_other_enc.copy()
+    for c in X_train_enc.columns:
+        if c not in Xo.columns:
+            if pd.api.types.is_numeric_dtype(X_train_enc[c]):
+                if fill_with == "median":
+                    v = np.nanmedian(pd.to_numeric(X_train_enc[c], errors="coerce").values)
+                    if np.isnan(v): v = 0.0
+                else:
+                    v = 0.0
+            else:
+                v = -1
+            Xo[c] = v
+    extra = [c for c in Xo.columns if c not in X_train_enc.columns]
+    if extra: Xo = Xo.drop(columns=extra)
+    return Xo[X_train_enc.columns]
+
+def _drop_orig_cols(df: pd.DataFrame) -> pd.DataFrame:
+    return df.drop(columns=[c for c in df.columns if c.endswith("_orig") or c == f"{TARGET_COL}_orig"], errors="ignore")
+
+def _get_building_slices(train_df: pd.DataFrame, test_df: pd.DataFrame, bld: int):
+    train_b = _prepare_time_sorted(train_df[train_df["건물번호"] == bld].copy()).reset_index(drop=True)
+    test_b  = _prepare_time_sorted(test_df[test_df["건물번호"] == bld].copy()).reset_index(drop=True)
+    # *_orig 안전 제거
+    train_b = _drop_orig_cols(train_b)
+    test_b  = _drop_orig_cols(test_b)
+    train_model = train_b.drop(columns=[c for c in COLS_TO_DROP if c in train_b.columns], errors="ignore")
+    test_model  = test_b.drop( columns=[c for c in COLS_TO_DROP if c in test_b.columns],  errors="ignore")
+    return train_b, test_b, train_model, test_model
+
+def _robust_numeric_sanitize(df: pd.DataFrame,
+                             clip_low_q: float = 0.001,
+                             clip_high_q: float = 0.999,
+                             abs_cap: float | None = 1e9) -> pd.DataFrame:
+    out = df.copy()
+    num_cols = out.select_dtypes(include=[np.number]).columns.tolist()
+    if not num_cols: return out
+    for c in num_cols:
+        col = pd.to_numeric(out[c], errors="coerce")
+        if not np.isfinite(col).all():
+            med = np.nanmedian(col.values); med = 0.0 if np.isnan(med) else med
+            col = col.replace([np.inf, -np.inf], np.nan).fillna(med)
+        out[c] = col
+    qlow = out[num_cols].quantile(clip_low_q, numeric_only=True)
+    qhi  = out[num_cols].quantile(clip_high_q, numeric_only=True)
+    for c in num_cols:
+        lo = qlow.get(c, None); hi = qhi.get(c, None)
+        if lo is not None: out[c] = np.maximum(out[c].values, lo)
+        if hi is not None: out[c] = np.minimum(out[c].values, hi)
+    if abs_cap is not None:
+        for c in num_cols: out[c] = np.clip(out[c].values, -abs_cap, abs_cap)
+    for c in num_cols: out[c] = out[c].astype(np.float32, copy=False)
+    return out
+
+def _parse_buildings_only(spec: Optional[str]) -> Optional[List[int]]:
+    if not spec: return None
+    spec = spec.replace(" ", "")
+    tmp: List[int] = []
+    for p in spec.split(","):
+        if not p: continue
+        if "-" in p:
+            a, b = p.split("-", 1); a, b = int(a), int(b)
+            tmp.extend(range(min(a, b), max(a, b) + 1))
+        else:
+            tmp.append(int(p))
+    return sorted(set(tmp))
+
+# ------------- summary loader -------------
+def load_selected_features_map_from_summary(summary) -> Dict[int, List[str]]:
+    """
+    summary: str(csv 경로) or DataFrame
+    must contain columns: building, selected_features
+    """
+    df = pd.read_csv(summary) if isinstance(summary, str) else summary.copy()
+    sel_map: Dict[int, List[str]] = {}
+    for _, r in df.iterrows():
+        b = int(r["building"])
+        feats = [] if pd.isna(r.get("selected_features")) else [
+            f.strip() for f in str(r["selected_features"]).split(",") if f.strip()
+        ]
+        sel_map[b] = feats
+    return sel_map
+
+# ------------- core predict -------------
+def make_submission(
+    train_df: pd.DataFrame,
+    test_df: pd.DataFrame,
+    *,
+    device: str = "cpu",
+    selected_features_map: Optional[Dict[int, List[str]]] = None,
+    buildings_only: Optional[List[int]] = None,
+    n_ensembles: int = 100,
+) -> pd.DataFrame:
+
+    device = _pick_device(device)
+    train_df = _prepare_time_sorted(train_df)
+    test_df  = _prepare_time_sorted(test_df)
+
+    preds = []
+    bld_list = sorted(set(int(b) for b in buildings_only)) if buildings_only else sorted(test_df["건물번호"].unique())
+    pbar = tqdm(bld_list, desc="Predicting per building (ensemble)", unit="bld", ncols=100)
+
+    for b in pbar:
+        try:
+            pbar.set_postfix_str(f"b{b} • slicing")
+            train_b_raw, test_b_raw, train_b_model, test_b_model = _get_building_slices(train_df, test_df, b)
+            if len(train_b_model)==0 or len(test_b_model)==0:
+                pbar.set_postfix_str(f"b{b} • skipped")
+                print(f"⚠️ 건물 {b}: train/test 부족 → 스킵")
+                continue
+
+            all_cols = [c for c in train_b_model.columns if c != TARGET_COL]
+            if selected_features_map and b in selected_features_map:
+                want = selected_features_map[b]
+                use_cols = [c for c in want if c in all_cols]
+                if not use_cols:
+                    print(f"⚠️ 건물 {b}: 선택피처 매칭 0개 → 전체 피처로 대체")
+                    use_cols = all_cols
+            else:
+                use_cols = all_cols
+
+            X_train = train_b_model[use_cols].copy()
+            y_train = train_b_model[TARGET_COL].copy()
+            X_test_base = test_b_model.drop(columns=[TARGET_COL], errors="ignore") if TARGET_COL in test_b_model.columns else test_b_model.copy()
+            # ✅ 테스트 누락 피처도 허용
+            X_test = X_test_base.reindex(columns=use_cols)
+
+            pbar.set_postfix_str(f"b{b} • sanitize")
+            X_train = _robust_numeric_sanitize(X_train)
+            X_test  = _robust_numeric_sanitize(X_test)
+
+            pbar.set_postfix_str(f"b{b} • encode")
+            X_train_enc, _ = _encode_like_train(X_train, X_train)
+            _, X_test_enc  = _encode_like_train(X_train, X_test)
+            X_test_enc     = _align_to_train_columns(X_train_enc, X_test_enc, fill_with="median")
+
+            X_train_np = X_train_enc.to_numpy(dtype=np.float32, copy=False)
+            X_test_np  = X_test_enc.to_numpy(dtype=np.float32,  copy=False)
+            y_train_np = y_train.to_numpy(dtype=np.float32,     copy=False)
+
+            pbar.set_postfix_str(f"b{b} • fit/predict x{n_ensembles}")
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message="overflow encountered in cast", category=RuntimeWarning)
+                y_preds = []
+                for seed in range(n_ensembles):
+                    model = TabPFNRegressor(random_state=seed, device=device, ignore_pretraining_limits=True)
+                    model.fit(X_train_np, y_train_np)
+                    y_preds.append(np.asarray(model.predict(X_test_np), dtype=np.float32))
+                y_test_pred = np.mean(y_preds, axis=0).astype(np.float32)
+
+            preds.append(pd.DataFrame({
+                "건물번호": test_b_raw["건물번호"].values,
+                "datetime": pd.to_datetime(test_b_raw["datetime"], errors="coerce").values,
+                TARGET_COL: y_test_pred
+            }))
+            pbar.set_postfix_str(f"b{b} • done")
+        except Exception as e:
+            pbar.set_postfix_str(f"b{b} • ERROR")
+            print(f"❌ 건물 {b} 예측 실패: {e}")
+
+    if not preds:
+        raise RuntimeError("예측 결과가 비었습니다.")
+    submit_df = pd.concat(preds, ignore_index=True).sort_values(["건물번호","datetime"]).reset_index(drop=True)
+    return submit_df
+
+def make_submission_with_template(
+    train,                 # str(csv) or DataFrame
+    test,                  # str(csv) or DataFrame
+    template,              # str(csv) or DataFrame
+    summary_csv,           # str(csv) or DataFrame (feature_selection_summary)
+    *,
+    device: str = "cuda",
+    buildings_only: Optional[str] = None,  # e.g. "1-5,8,10-12"
+    n_ensembles: int = 100,
+    save_path: Optional[str] = None,
+) -> pd.DataFrame:
+    # Load all
+    train_df  = pd.read_csv(train, encoding="utf-8-sig")  if isinstance(train, str) else train.copy()
+    test_df   = pd.read_csv(test,  encoding="utf-8-sig")  if isinstance(test, str)  else test.copy()
+    template_df  = pd.read_csv(template, encoding="utf-8-sig") if isinstance(template, str) else template.copy()
+    sel_map = load_selected_features_map_from_summary(summary_csv)
+
+    # datetime 보장
+    if "datetime" in train_df.columns: train_df["datetime"] = pd.to_datetime(train_df["datetime"], errors="coerce")
+    if "datetime" in test_df.columns:  test_df["datetime"]  = pd.to_datetime(test_df["datetime"],  errors="coerce")
+
+    b_only = _parse_buildings_only(buildings_only)
+    submit_df = make_submission(
+        train_df, test_df,
+        device=device,
+        selected_features_map=sel_map,
+        buildings_only=b_only,
+        n_ensembles=n_ensembles,
+    )
+
+    submit_df["num_date_time"] = (
+        submit_df["건물번호"].astype(str) + "_" +
+        pd.to_datetime(submit_df["datetime"], errors="coerce").dt.strftime("%Y%m%d %H")
+    )
+    out_df = template_df.copy().merge(
+        submit_df[["num_date_time", TARGET_COL]],
+        on="num_date_time", how="left"
+    )
+    out_df["answer"] = out_df[TARGET_COL]
+    out_df = out_df.drop(columns=[TARGET_COL])
+    if "answer" in out_df.columns:
+        out_df["answer"] = out_df["answer"].round(2)
+
+    if save_path:
+        Path(Path(save_path).parent).mkdir(parents=True, exist_ok=True)
+        out_df.to_csv(save_path, index=False, encoding="utf-8-sig", float_format="%.2f")
+        print(f"✅ Submission file saved to: {save_path}")
+    return out_df
+
+# 경로 사용
+out = make_submission_with_template(
+    train=final_train,
+    test=final_test,
+    template="./data/sample_submission.csv",
+    summary_csv="./figs/feature_selection_summary.csv",
+    device="cuda",
+    n_ensembles=100,
+    buildings_only=None,
+    save_path="./submission_TabPFN_1DropOutVariance_SeedEnsemble100.csv",
+)
+out.head()

@@ -294,8 +294,8 @@ def cross_validate_with_kfold(pivot, pairs, feature_cols, is_validate_mode=False
     # KFold 생성
     kfold = KFold(n_splits=n_splits, shuffle=True, random_state=42)
     
-    # 모든 모델의 모든 fold 예측 결과를 저장할 딕셔너리
-    all_predictions = {}  # {(leading_item_id, following_item_id): [pred1, pred2, ...]}
+    # 모델별 예측 결과를 저장할 딕셔너리 (모델별로 구분)
+    model_predictions = {}  # {model_name: {(leading_item_id, following_item_id): [pred1, pred2, ...]}}
     fold_scores = []
     
     # 사용할 모델 리스트
@@ -375,12 +375,14 @@ def cross_validate_with_kfold(pivot, pairs, feature_cols, is_validate_mode=False
             # 전체 pairs에 대해 예측 (실제 제출 형식)
             fold_submission = predict(pivot, pairs, reg, feature_cols)
             
-            # 예측 결과를 딕셔너리에 누적
+            # 예측 결과를 모델별로 딕셔너리에 누적
+            if model_name not in model_predictions:
+                model_predictions[model_name] = {}
             for _, pred_row in fold_submission.iterrows():
                 pair_key = (pred_row['leading_item_id'], pred_row['following_item_id'])
-                if pair_key not in all_predictions:
-                    all_predictions[pair_key] = []
-                all_predictions[pair_key].append(pred_row['value'])
+                if pair_key not in model_predictions[model_name]:
+                    model_predictions[model_name][pair_key] = []
+                model_predictions[model_name][pair_key].append(pred_row['value'])
             
             # validate 모드인 경우 이 fold의 점수 계산
             if is_validate_mode and answer_df is not None:
@@ -401,17 +403,36 @@ def cross_validate_with_kfold(pivot, pairs, feature_cols, is_validate_mode=False
                 except Exception as e:
                     print(f"  {model_name} Fold {fold_idx} 평가 중 오류: {e}")
     
-    # 모든 모델의 모든 fold 예측을 앙상블하여 최종 예측 생성
+    # 모든 모델의 모든 fold 예측을 모델별 가중치 적용 후 앙상블하여 최종 예측 생성
     print("\n" + "="*60)
-    print("[앙상블] 모든 모델의 모든 fold 예측을 앙상블 중...")
+    print("[앙상블] 모델별 가중치 적용 후 단순 평균 앙상블 중...")
     print("="*60)
+    
+    # 모델별 가중치 (leaderboard 성능 기준: LightGBM > CatBoost > XGBoost)
+    model_weights = {'LightGBM': 0.40, 'CatBoost': 0.35, 'XGBoost': 0.25}
+    
+    # 모든 pair_key 수집
+    all_pairs = set()
+    for model_name in model_predictions:
+        all_pairs.update(model_predictions[model_name].keys())
+    
     final_rows = []
-    for pair_key, predictions in all_predictions.items():
-        # 중앙값과 평균의 가중 평균 사용 (안정성과 정확도 균형)
-        median_pred = np.median(predictions)
-        mean_pred = np.mean(predictions)
-        # 가중 평균: 중앙값 60%, 평균 40%
-        avg_pred = 0.6 * median_pred + 0.4 * mean_pred
+    for pair_key in all_pairs:
+        weighted_sum = 0.0
+        total_weight = 0.0
+        
+        # 각 모델의 평균 예측에 가중치 적용
+        for model_name in ['XGBoost', 'LightGBM', 'CatBoost']:
+            if model_name in model_predictions and pair_key in model_predictions[model_name]:
+                model_preds = model_predictions[model_name][pair_key]
+                model_avg = np.mean(model_preds)  # 단순 평균 (research.txt 방식)
+                weight = model_weights[model_name]
+                weighted_sum += model_avg * weight
+                total_weight += weight
+        
+        # 가중 평균 계산
+        avg_pred = weighted_sum / total_weight if total_weight > 0 else 0.0
+        
         # 후처리: 음수는 0으로, 소수점은 정수로 반올림
         avg_pred = max(0.0, float(avg_pred))
         avg_pred = int(round(avg_pred))
