@@ -560,18 +560,24 @@ def main():
 
     # 3. 공행성쌍 탐색
     print("\n[3단계] 공행성 쌍 탐색 중...")
+    # F1 Score 향상을 위한 보수적인 파라미터 조정:
+    # - corr_threshold: 0.35 → 0.34 (약간만 낮춰서 과적합 방지)
+    # - min_nonzero: 12 유지 (데이터 품질 유지)
+    corr_threshold = 0.34
+    min_nonzero = 12
+    
     if is_validate_mode:
         # 검증 모드: 학습 데이터로 예측할 공행성 쌍 탐색
-        pairs = find_comovement_pairs(pivot_train, max_lag=6, min_nonzero=12, corr_threshold=0.35)
+        pairs = find_comovement_pairs(pivot_train, max_lag=6, min_nonzero=min_nonzero, corr_threshold=corr_threshold)
         print(f"학습 데이터로 탐색된 공행성쌍 수: {len(pairs)}")
         
         # 정답 공행성 쌍 탐색 (검증 기간 전체 포함)
         # 실제 대회에서는 정답 공행성 쌍이 미리 정해져 있지만,
         # 검증 모드에서는 검증 기간 전체 데이터를 사용하여 더 정확한 공행성 쌍을 찾음
-        answer_pairs = find_comovement_pairs(pivot_for_answer, max_lag=6, min_nonzero=12, corr_threshold=0.35)
+        answer_pairs = find_comovement_pairs(pivot_for_answer, max_lag=6, min_nonzero=min_nonzero, corr_threshold=corr_threshold)
         print(f"정답 공행성쌍 수 (검증 기간 포함): {len(answer_pairs)}")
     else:
-        pairs = find_comovement_pairs(pivot_train, max_lag=6, min_nonzero=12, corr_threshold=0.35)
+        pairs = find_comovement_pairs(pivot_train, max_lag=6, min_nonzero=min_nonzero, corr_threshold=corr_threshold)
         print(f"탐색된 공행성쌍 수: {len(pairs)}")
 
     if len(pairs) == 0:
