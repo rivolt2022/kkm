@@ -1,6 +1,14 @@
-feature_name,description,implementation,expected_benefit
-month_seasonality,월별 계절성 지표 (1-12월 패턴),각 월의 평균 무역량을 feature로 추가,계절적 패턴을 반영하여 예측 정확도 향상
-volatility,최근 N개월의 변동성 (표준편차/평균),최근 6개월의 CV 계산,변동성이 큰 품목의 예측 개선
-relative_size,선행/후행 품목의 상대적 크기 비율,a_t_lag / b_t (스케일 차이 보정),스케일 차이 문제 완화
-cumulative_sum,최근 N개월 누적 합계,"최근 3개월, 6개월 누적 합계",장기 트렌드 반영
-acceleration,변화율의 변화 (2차 미분),(b_t - b_t_1) - (b_t_1 - b_t_2),가속/감속 패턴 반영
+﻿category,feature_name,description,implementation,priority
+품목별 통계량,item_mean,품목별 전체 기간 평균 무역량,item_stats_df의 mean 컬럼 사용,높음
+품목별 통계량,item_std,품목별 전체 기간 표준편차,item_stats_df의 std 컬럼 사용,높음
+품목별 통계량,item_cv,품목별 변동계수 (std/mean),item_stats_df의 cv 컬럼 사용,중간
+품목별 통계량,item_zero_ratio,품목별 0인 월의 비율,item_stats_df의 zero_ratio 컬럼 사용,중간
+상호작용 변수,lag_x_corr,lag와 상관계수의 곱 (관계 강도 × 시차),best_lag * abs(max_corr),높음
+상호작용 변수,mean_ratio,후행 품목 평균 / 선행 품목 평균,follower_mean / (leader_mean + 1e-6),중간
+상호작용 변수,std_ratio,후행 품목 표준편차 / 선행 품목 표준편차,follower_std / (leader_std + 1e-6),중간
+시계열 통계량,b_ma6,후행 품목의 6개월 이동평균,pd.Series(b_series).rolling(6).mean(),높음
+시계열 통계량,b_ma12,후행 품목의 12개월 이동평균,pd.Series(b_series).rolling(12).mean(),중간
+시계열 통계량,b_std3,후행 품목의 3개월 이동표준편차,pd.Series(b_series).rolling(3).std(),높음
+시계열 통계량,b_range3,후행 품목의 3개월 범위 (max - min),pd.Series(b_series).rolling(3).max() - pd.Series(b_series).rolling(3).min(),중간
+Count Encoding,leader_nonzero_count,선행 품목의 0이 아닌 월 개수,count_df의 nonzero_month_count 사용,중간
+Count Encoding,follower_nonzero_count,후행 품목의 0이 아닌 월 개수,count_df의 nonzero_month_count 사용,중간

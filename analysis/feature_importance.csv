@@ -1,0 +1,17 @@
+﻿feature,importance
+b_trend,0.38105592
+follower_mean,0.19962394
+b_ma3,0.16466784
+b_ma6,0.047972146
+follower_std,0.047422957
+b_t,0.047279764
+b_t_1,0.04249548
+b_std3,0.028106995
+b_change,0.027191367
+a_trend,0.0026926768
+best_lag,0.0023749352
+max_corr,0.0023460041
+a_t_lag,0.0023045782
+lag_x_corr,0.0016273097
+leader_mean,0.001437618
+leader_std,0.0014004242

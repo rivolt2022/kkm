@@ -28,6 +28,31 @@ def safe_corr(x, y):
     return float(np.corrcoef(x, y)[0, 1])
 
 
+def compute_item_statistics(pivot):
+    """
+    품목별 통계량 계산 (research3.txt의 groupby 통계량 아이디어)
+    품목별 mean, std, cv, zero_ratio 등을 계산하여 딕셔너리로 반환
+    """
+    item_stats = {}
+    
+    for item_id in pivot.index:
+        series = pivot.loc[item_id].values.astype(float)
+        non_zero = series[series > 0]
+        
+        mean_val = np.mean(series)
+        std_val = np.std(series)
+        
+        item_stats[item_id] = {
+            'mean': mean_val,
+            'std': std_val,
+            'cv': std_val / (mean_val + 1e-6),  # 변동계수
+            'zero_ratio': (len(series) - len(non_zero)) / len(series),
+            'nonzero_count': len(non_zero),
+        }
+    
+    return item_stats
+
+
 def find_comovement_pairs(pivot, max_lag=6, min_nonzero=12, corr_threshold=0.35):
     """
     공행성 쌍 탐색
@@ -90,6 +115,7 @@ def build_training_data(pivot, pairs, end_month_idx=None):
     - b_trend: 후행 품목의 추세 (최근 3개월 평균)
     - a_trend: 선행 품목의 추세 (최근 3개월 평균)
     - b_ma3: 후행 품목의 3개월 이동평균
+    - b_change: 지난 달 대비 변화율
     
     Args:
         pivot: 피벗 테이블
@@ -268,10 +294,12 @@ def predict(pivot, pairs, reg, feature_cols, predict_month_idx=None):
 
 
 def cross_validate_with_kfold(pivot, pairs, feature_cols, is_validate_mode=False, 
-                               answer_df=None, n_splits=5):
+                               answer_df=None, n_splits=5, seeds=[42, 1031, 106],
+                               model_weights=None):
     """
     KFold 교차 검증을 수행하고 모든 fold의 예측을 앙상블하는 함수
     XGBoost, LightGBM, CatBoost 세 가지 모델을 모두 사용하여 앙상블
+    research3.txt의 Seed Ensemble 전략 적용: 여러 seed로 학습하여 다양성 증가
     
     Args:
         pivot: 피벗 테이블
@@ -280,6 +308,8 @@ def cross_validate_with_kfold(pivot, pairs, feature_cols, is_validate_mode=False
         is_validate_mode: 검증 모드 여부
         answer_df: 검증 모드일 때 정답 데이터프레임 (None이면 평가 안 함)
         n_splits: KFold 분할 수 (기본값: 5)
+        seeds: 사용할 seed 리스트 (기본값: [42, 1031, 106], research3.txt 참고)
+        model_weights: 모델별 가중치 딕셔너리 (None이면 기본값 사용)
     
     Returns:
         final_submission: 모든 fold의 예측을 앙상블한 최종 예측 결과
@@ -297,141 +327,163 @@ def cross_validate_with_kfold(pivot, pairs, feature_cols, is_validate_mode=False
     train_X = df_train_model[feature_cols].values
     train_y = df_train_model["target"].values
     
-    # KFold 생성
-    kfold = KFold(n_splits=n_splits, shuffle=True, random_state=42)
+    # Seed Ensemble: 여러 seed로 학습하여 다양성 증가
+    print(f"\n[Seed Ensemble] {len(seeds)}개 seed로 학습 시작 (research3.txt 전략)")
+    all_seed_predictions = {}  # {seed: {model_name: {pair_key: [preds]}}}
+    all_fold_scores = []
     
-    # 모델별 예측 결과를 저장할 딕셔너리 (모델별로 구분)
-    model_predictions = {}  # {model_name: {(leading_item_id, following_item_id): [pred1, pred2, ...]}}
-    fold_scores = []
-    
-    # 사용할 모델 리스트
-    models = [
-        ('XGBoost', 'xgb'),
-        ('LightGBM', 'lgb'),
-        ('CatBoost', 'cb')
-    ]
-    
-    print(f"\n[앙상블] {len(models)}개 모델 × {n_splits}-Fold 교차 검증 시작...")
-    
-    # 각 모델마다 KFold 수행
-    for model_name, model_type in models:
+    for seed_idx, seed in enumerate(seeds, 1):
         print(f"\n{'='*60}")
-        print(f"[{model_name}] {n_splits}-Fold 교차 검증 시작")
+        print(f"[Seed {seed_idx}/{len(seeds)}] Seed={seed} 학습 시작")
         print(f"{'='*60}")
         
-        for fold_idx, (train_idx, val_idx) in enumerate(kfold.split(train_X), 1):
-            print(f"\n--- {model_name} Fold {fold_idx}/{n_splits} ---")
-            
-            # 학습/검증 데이터 분할
-            X_train_fold = train_X[train_idx]
-            y_train_fold = train_y[train_idx]
-            X_val_fold = train_X[val_idx]
-            y_val_fold = train_y[val_idx]
-            
-            print(f"  학습 샘플 수: {len(X_train_fold)}, 검증 샘플 수: {len(X_val_fold)}")
-            
-            # 로그 변환된 타겟으로 학습
-            y_train_fold_log = np.log1p(y_train_fold)
-            
-            # 모델별 학습
-            if model_type == 'xgb':
-                reg = xgb.XGBRegressor(
-                    n_estimators=250,
-                    max_depth=6,
-                    learning_rate=0.08,
-                    subsample=0.85,
-                    colsample_bytree=0.85,
-                    min_child_weight=3,
-                    reg_alpha=0.05,
-                    reg_lambda=0.5,
-                    random_state=42,
-                    n_jobs=-1,
-                    verbosity=0
-                )
-            elif model_type == 'lgb':
-                reg = lgb.LGBMRegressor(
-                    n_estimators=250,
-                    max_depth=6,
-                    learning_rate=0.08,
-                    subsample=0.85,
-                    colsample_bytree=0.85,
-                    min_child_samples=3,
-                    reg_alpha=0.05,
-                    reg_lambda=0.5,
-                    random_state=42,
-                    n_jobs=-1,
-                    verbosity=-1
-                )
-            elif model_type == 'cb':
-                reg = cb.CatBoostRegressor(
-                    iterations=250,
-                    depth=6,
-                    learning_rate=0.08,
-                    subsample=0.85,
-                    colsample_bylevel=0.85,
-                    min_data_in_leaf=3,
-                    l2_leaf_reg=0.5,
-                    random_state=42,
-                    thread_count=-1,
-                    verbose=False
-                )
-            
-            reg.fit(X_train_fold, y_train_fold_log)
-            
-            # 전체 pairs에 대해 예측 (실제 제출 형식)
-            fold_submission = predict(pivot, pairs, reg, feature_cols)
-            
-            # 예측 결과를 모델별로 딕셔너리에 누적
-            if model_name not in model_predictions:
-                model_predictions[model_name] = {}
-            for _, pred_row in fold_submission.iterrows():
-                pair_key = (pred_row['leading_item_id'], pred_row['following_item_id'])
-                if pair_key not in model_predictions[model_name]:
-                    model_predictions[model_name][pair_key] = []
-                model_predictions[model_name][pair_key].append(pred_row['value'])
-            
-            # validate 모드인 경우 이 fold의 점수 계산
-            if is_validate_mode and answer_df is not None:
-                try:
-                    score = comovement_score(answer_df, fold_submission)
-                    f1 = comovement_f1(answer_df, fold_submission)
-                    nmae = comovement_nmae(answer_df, fold_submission)
-                    
-                    fold_scores.append({
-                        'model': model_name,
-                        'fold': fold_idx,
-                        'f1': f1,
-                        'nmae': nmae,
-                        'score': score
-                    })
-                    
-                    print(f"  {model_name} Fold {fold_idx} 점수: F1={f1:.6f}, NMAE={nmae:.6f}, Score={score:.6f}")
-                except Exception as e:
-                    print(f"  {model_name} Fold {fold_idx} 평가 중 오류: {e}")
+        # KFold 생성 (seed별로 다른 분할)
+        kfold = KFold(n_splits=n_splits, shuffle=True, random_state=seed)
     
-    # 모든 모델의 모든 fold 예측을 모델별 가중치 적용 후 앙상블하여 최종 예측 생성
+        # 모델별 예측 결과를 저장할 딕셔너리 (모델별로 구분)
+        model_predictions = {}  # {model_name: {(leading_item_id, following_item_id): [pred1, pred2, ...]}}
+        fold_scores = []
+        
+        # 사용할 모델 리스트
+        models = [
+            ('XGBoost', 'xgb'),
+            ('LightGBM', 'lgb'),
+            ('CatBoost', 'cb')
+        ]
+        
+        print(f"\n[Seed {seed}] {len(models)}개 모델 × {n_splits}-Fold 교차 검증 시작...")
+        
+        # 각 모델마다 KFold 수행
+        for model_name, model_type in models:
+            print(f"\n--- [{model_name}] {n_splits}-Fold 교차 검증 시작 ---")
+            
+            for fold_idx, (train_idx, val_idx) in enumerate(kfold.split(train_X), 1):
+                print(f"\n--- {model_name} Fold {fold_idx}/{n_splits} ---")
+                
+                # 학습/검증 데이터 분할
+                X_train_fold = train_X[train_idx]
+                y_train_fold = train_y[train_idx]
+                X_val_fold = train_X[val_idx]
+                y_val_fold = train_y[val_idx]
+                
+                print(f"  학습 샘플 수: {len(X_train_fold)}, 검증 샘플 수: {len(X_val_fold)}")
+                
+                # 로그 변환된 타겟으로 학습
+                y_train_fold_log = np.log1p(y_train_fold)
+                
+                # 모델별 학습 (seed 적용)
+                # 하이퍼파라미터는 optimize_hyperparameters_grid.py 실행 결과 반영
+                if model_type == 'xgb':
+                    reg = xgb.XGBRegressor(
+                        n_estimators=250,
+                        max_depth=7,  # 최적화: 6 -> 7
+                        learning_rate=0.09,  # 최적화: 0.08 -> 0.09
+                        subsample=0.8,  # 최적화: 0.85 -> 0.8
+                        colsample_bytree=0.9,  # 최적화: 0.85 -> 0.9
+                        min_child_weight=3,
+                        reg_alpha=0.05,
+                        reg_lambda=0.5,
+                        random_state=seed,  # seed 적용
+                        n_jobs=-1,
+                        verbosity=0
+                    )
+                elif model_type == 'lgb':
+                    reg = lgb.LGBMRegressor(
+                        n_estimators=250,
+                        max_depth=7,  # 최적화: 6 -> 7
+                        learning_rate=0.07,  # 최적화: 0.08 -> 0.07
+                        subsample=0.8,  # 최적화: 0.85 -> 0.8
+                        colsample_bytree=0.85,
+                        min_child_samples=3,
+                        reg_alpha=0.03,  # 최적화: 0.05 -> 0.03
+                        reg_lambda=0.5,
+                        random_state=seed,  # seed 적용
+                        n_jobs=-1,
+                        verbosity=-1
+                    )
+                elif model_type == 'cb':
+                    reg = cb.CatBoostRegressor(
+                        iterations=250,
+                        depth=7,  # 최적화: 6 -> 7
+                        learning_rate=0.09,  # 최적화: 0.08 -> 0.09
+                        subsample=0.8,  # 최적화: 0.85 -> 0.8
+                        colsample_bylevel=0.9,  # 최적화: 0.85 -> 0.9
+                        min_data_in_leaf=3,
+                        l2_leaf_reg=0.6,  # 최적화: 0.5 -> 0.6
+                        random_state=seed,  # seed 적용
+                        thread_count=-1,
+                        verbose=False
+                    )
+                
+                reg.fit(X_train_fold, y_train_fold_log)
+                
+                # 전체 pairs에 대해 예측 (실제 제출 형식)
+                fold_submission = predict(pivot, pairs, reg, feature_cols)
+                
+                # 예측 결과를 모델별로 딕셔너리에 누적
+                if model_name not in model_predictions:
+                    model_predictions[model_name] = {}
+                for _, pred_row in fold_submission.iterrows():
+                    pair_key = (pred_row['leading_item_id'], pred_row['following_item_id'])
+                    if pair_key not in model_predictions[model_name]:
+                        model_predictions[model_name][pair_key] = []
+                    model_predictions[model_name][pair_key].append(pred_row['value'])
+                
+                # validate 모드인 경우 이 fold의 점수 계산
+                if is_validate_mode and answer_df is not None:
+                    try:
+                        score = comovement_score(answer_df, fold_submission)
+                        f1 = comovement_f1(answer_df, fold_submission)
+                        nmae = comovement_nmae(answer_df, fold_submission)
+                        
+                        fold_scores.append({
+                            'model': model_name,
+                            'fold': fold_idx,
+                            'f1': f1,
+                            'nmae': nmae,
+                            'score': score
+                        })
+                        
+                        print(f"  {model_name} Fold {fold_idx} 점수: F1={f1:.6f}, NMAE={nmae:.6f}, Score={score:.6f}")
+                    except Exception as e:
+                        print(f"  {model_name} Fold {fold_idx} 평가 중 오류: {e}")
+        
+        # 이 seed의 예측 결과 저장
+        all_seed_predictions[seed] = model_predictions
+        all_fold_scores.extend(fold_scores)
+    
+    # Seed Ensemble: 모든 seed의 예측을 평균하여 최종 앙상블
     print("\n" + "="*60)
-    print("[앙상블] 모델별 가중치 적용 후 단순 평균 앙상블 중...")
+    print("[Seed Ensemble] 모든 seed의 예측을 평균하여 최종 앙상블 중...")
     print("="*60)
     
-    # 모델별 가중치 (leaderboard 성능 기준: LightGBM > CatBoost > XGBoost)
-    model_weights = {'LightGBM': 0.40, 'CatBoost': 0.35, 'XGBoost': 0.25}
+    # 모델별 가중치 (optimize_models_independently.py 실행 결과 반영)
+    # 최적 가중치: 균등 가중치 (0.33, 0.33, 0.33)가 최고 성능
+    if model_weights is None:
+        model_weights = {'XGBoost': 0.33, 'LightGBM': 0.33, 'CatBoost': 0.33}
     
     # 모든 pair_key 수집
     all_pairs = set()
-    for model_name in model_predictions:
-        all_pairs.update(model_predictions[model_name].keys())
+    for seed in all_seed_predictions:
+        for model_name in all_seed_predictions[seed]:
+            all_pairs.update(all_seed_predictions[seed][model_name].keys())
     
     final_rows = []
     for pair_key in all_pairs:
         weighted_sum = 0.0
         total_weight = 0.0
         
-        # 각 모델의 평균 예측에 가중치 적용
+        # 각 모델의 모든 seed × 모든 fold 예측에 가중치 적용
         for model_name in ['XGBoost', 'LightGBM', 'CatBoost']:
-            if model_name in model_predictions and pair_key in model_predictions[model_name]:
-                model_preds = model_predictions[model_name][pair_key]
-                model_avg = np.mean(model_preds)  # 단순 평균 (research.txt 방식)
+            model_all_preds = []  # 이 모델의 모든 seed × 모든 fold 예측
+            
+            # 모든 seed에서 이 모델의 예측 수집
+            for seed in all_seed_predictions:
+                if model_name in all_seed_predictions[seed] and pair_key in all_seed_predictions[seed][model_name]:
+                    model_all_preds.extend(all_seed_predictions[seed][model_name][pair_key])
+            
+            if len(model_all_preds) > 0:
+                model_avg = np.mean(model_all_preds)  # 모든 seed × 모든 fold의 평균
                 weight = model_weights[model_name]
                 weighted_sum += model_avg * weight
                 total_weight += weight
@@ -452,13 +504,13 @@ def cross_validate_with_kfold(pivot, pairs, feature_cols, is_validate_mode=False
     final_submission = pd.DataFrame(final_rows)
     
     # validate 모드인 경우 평균 점수 출력
-    if is_validate_mode and len(fold_scores) > 0:
-        # 모델별 평균 점수
+    if is_validate_mode and len(all_fold_scores) > 0:
+        # 모델별 평균 점수 (모든 seed 포함)
         print("\n" + "=" * 60)
-        print("모델별 KFold 교차 검증 결과 (평균)")
+        print("모델별 KFold 교차 검증 결과 (평균, 모든 seed 포함)")
         print("=" * 60)
         for model_name in ['XGBoost', 'LightGBM', 'CatBoost']:
-            model_scores = [s for s in fold_scores if s['model'] == model_name]
+            model_scores = [s for s in all_fold_scores if s['model'] == model_name]
             if len(model_scores) > 0:
                 avg_f1 = np.mean([s['f1'] for s in model_scores])
                 avg_nmae = np.mean([s['nmae'] for s in model_scores])
@@ -468,10 +520,10 @@ def cross_validate_with_kfold(pivot, pairs, feature_cols, is_validate_mode=False
                 print(f"  평균 NMAE: {avg_nmae:.6f}")
                 print(f"  평균 Final Score: {avg_score:.6f}")
         
-        # 전체 평균 점수
-        avg_f1 = np.mean([s['f1'] for s in fold_scores])
-        avg_nmae = np.mean([s['nmae'] for s in fold_scores])
-        avg_score = np.mean([s['score'] for s in fold_scores])
+        # 전체 평균 점수 (모든 seed × 모든 모델 × 모든 fold)
+        avg_f1 = np.mean([s['f1'] for s in all_fold_scores])
+        avg_nmae = np.mean([s['nmae'] for s in all_fold_scores])
+        avg_score = np.mean([s['score'] for s in all_fold_scores])
         
         print("\n" + "=" * 60)
         print("전체 평균 (모든 모델 × 모든 fold)")
@@ -482,7 +534,7 @@ def cross_validate_with_kfold(pivot, pairs, feature_cols, is_validate_mode=False
         print(f"  (Score = 0.6 × F1 + 0.4 × (1 - NMAE))")
         print("=" * 60)
     
-    return final_submission, fold_scores
+    return final_submission, all_fold_scores
 
 
 def main():
@@ -585,6 +637,8 @@ def main():
         return
 
     # 4. Feature 컬럼 정의
+    # 분석 결과: 기존 9개 피처가 가장 좋은 성능을 보임
+    # 새로운 피처들은 높은 상관관계(중복) 또는 낮은 중요도로 인해 성능 하락
     feature_cols = ['b_t', 'b_t_1', 'a_t_lag', 'max_corr', 'best_lag', 
                     'b_trend', 'a_trend', 'b_ma3', 'b_change']
 
