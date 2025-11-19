@@ -458,9 +458,9 @@ def cross_validate_with_kfold(pivot, pairs, feature_cols, is_validate_mode=False
     print("="*60)
     
     # 모델별 가중치 (optimize_models_independently.py 실행 결과 반영)
-    # 최적 가중치: 균등 가중치 (0.33, 0.33, 0.33)가 최고 성능
+    # 최적 가중치: XGBoost=0.40, LightGBM=0.30, CatBoost=0.30 (Score: 0.632840)
     if model_weights is None:
-        model_weights = {'XGBoost': 0.33, 'LightGBM': 0.33, 'CatBoost': 0.33}
+        model_weights = {'XGBoost': 0.40, 'LightGBM': 0.30, 'CatBoost': 0.30}
     
     # 모든 pair_key 수집
     all_pairs = set()

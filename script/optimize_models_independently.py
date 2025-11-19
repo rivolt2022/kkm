@@ -22,15 +22,16 @@ import catboost as cb
 from sklearn.model_selection import KFold
 
 
-def optimize_and_ensemble(pivot_train, pivot_for_answer, feature_cols, n_splits=3):
+def optimize_and_ensemble(pivot_train, pivot_for_answer, feature_cols, n_splits=5, seeds=[42]):
     """
     각 모델을 독립적으로 최적화한 후 앙상블
+    train.py의 현재 설정에 맞춰 하이퍼파라미터 및 예측 후처리 적용
     """
     print("=" * 60)
     print("단일 모델 최적화 후 앙상블")
     print("=" * 60)
     
-    # 공행성 쌍 탐색
+    # 공행성 쌍 탐색 (train.py와 동일한 파라미터)
     corr_threshold = 0.34
     min_nonzero = 12
     pairs = find_comovement_pairs(pivot_train, max_lag=6, min_nonzero=min_nonzero, corr_threshold=corr_threshold)
@@ -60,102 +61,125 @@ def optimize_and_ensemble(pivot_train, pivot_for_answer, feature_cols, n_splits=
     y = df_train["target"].values
     y_log = np.log1p(y)
     
-    # 각 모델별 최적 파라미터 (간단한 Grid Search 결과 또는 현재 파라미터)
-    # 실제로는 optimize_hyperparameters_grid.py를 먼저 실행하여 최적 파라미터를 찾아야 함
-    # 여기서는 현재 파라미터를 사용하고, 각 모델을 독립적으로 학습
-    
+    # train.py의 현재 하이퍼파라미터 사용 (optimize_hyperparameters_grid.py 최적화 결과 반영)
     print("\n[1단계] 각 모델을 독립적으로 학습 및 예측...")
+    print(f"KFold n_splits={n_splits}, Seeds={seeds}")
     
-    models_config = [
-        {
-            'name': 'XGBoost',
-            'type': 'xgb',
-            'params': {
-                'n_estimators': 250,
-                'max_depth': 6,
-                'learning_rate': 0.08,
-                'subsample': 0.85,
-                'colsample_bytree': 0.85,
-                'min_child_weight': 3,
-                'reg_alpha': 0.05,
-                'reg_lambda': 0.5,
-                'random_state': 42,
-                'n_jobs': -1,
-                'verbosity': 0
-            }
-        },
-        {
-            'name': 'LightGBM',
-            'type': 'lgb',
-            'params': {
-                'n_estimators': 250,
-                'max_depth': 6,
-                'learning_rate': 0.08,
-                'subsample': 0.85,
-                'colsample_bytree': 0.85,
-                'min_child_samples': 3,
-                'reg_alpha': 0.05,
-                'reg_lambda': 0.5,
-                'random_state': 42,
-                'n_jobs': -1,
-                'verbosity': -1
-            }
-        },
-        {
-            'name': 'CatBoost',
-            'type': 'cb',
-            'params': {
-                'iterations': 250,
-                'depth': 6,
-                'learning_rate': 0.08,
-                'subsample': 0.85,
-                'colsample_bylevel': 0.85,
-                'min_data_in_leaf': 3,
-                'l2_leaf_reg': 0.5,
-                'random_state': 42,
-                'thread_count': -1,
-                'verbose': False
-            }
-        }
-    ]
+    # Seed Ensemble: 여러 seed로 학습하여 다양성 증가 (train.py와 동일한 전략)
+    all_seed_predictions = {}  # {seed: {model_name: {pair_key: [preds]}}}
     
-    # KFold로 각 모델 학습 및 예측
-    kfold = KFold(n_splits=n_splits, shuffle=True, random_state=42)
-    model_predictions = {}  # {model_name: {pair_key: [preds]}}
-    
-    for model_config in models_config:
-        model_name = model_config['name']
-        model_type = model_config['type']
-        params = model_config['params']
+    for seed_idx, seed in enumerate(seeds, 1):
+        print(f"\n{'='*60}")
+        print(f"[Seed {seed_idx}/{len(seeds)}] Seed={seed} 학습 시작")
+        print(f"{'='*60}")
         
-        print(f"\n--- {model_name} 학습 중... ---")
-        model_predictions[model_name] = {}
+        # KFold 생성 (seed별로 다른 분할)
+        kfold = KFold(n_splits=n_splits, shuffle=True, random_state=seed)
+        model_predictions = {}  # {model_name: {pair_key: [preds]}}
         
-        for fold_idx, (train_idx, val_idx) in enumerate(kfold.split(X), 1):
-            print(f"  Fold {fold_idx}/{n_splits}")
+        # 사용할 모델 리스트
+        models = [
+            ('XGBoost', 'xgb'),
+            ('LightGBM', 'lgb'),
+            ('CatBoost', 'cb')
+        ]
+        
+        # 각 모델마다 KFold 수행
+        for model_name, model_type in models:
+            print(f"\n--- [{model_name}] {n_splits}-Fold 교차 검증 시작 ---")
             
-            X_train_fold = X[train_idx]
-            y_train_fold = y_log[train_idx]
+            if model_name not in model_predictions:
+                model_predictions[model_name] = {}
             
-            # 모델 생성 및 학습
-            if model_type == 'xgb':
-                reg = xgb.XGBRegressor(**params)
-            elif model_type == 'lgb':
-                reg = lgb.LGBMRegressor(**params)
-            elif model_type == 'cb':
-                reg = cb.CatBoostRegressor(**params)
+            for fold_idx, (train_idx, val_idx) in enumerate(kfold.split(X), 1):
+                print(f"  Fold {fold_idx}/{n_splits}")
+                
+                X_train_fold = X[train_idx]
+                y_train_fold = y_log[train_idx]
+                
+                # 모델별 학습 (train.py와 동일한 하이퍼파라미터)
+                if model_type == 'xgb':
+                    reg = xgb.XGBRegressor(
+                        n_estimators=250,
+                        max_depth=7,  # 최적화: 6 -> 7
+                        learning_rate=0.09,  # 최적화: 0.08 -> 0.09
+                        subsample=0.8,  # 최적화: 0.85 -> 0.8
+                        colsample_bytree=0.9,  # 최적화: 0.85 -> 0.9
+                        min_child_weight=3,
+                        reg_alpha=0.05,
+                        reg_lambda=0.5,
+                        random_state=seed,  # seed 적용
+                        n_jobs=-1,
+                        verbosity=0
+                    )
+                elif model_type == 'lgb':
+                    reg = lgb.LGBMRegressor(
+                        n_estimators=250,
+                        max_depth=7,  # 최적화: 6 -> 7
+                        learning_rate=0.07,  # 최적화: 0.08 -> 0.07
+                        subsample=0.8,  # 최적화: 0.85 -> 0.8
+                        colsample_bytree=0.85,
+                        min_child_samples=3,
+                        reg_alpha=0.03,  # 최적화: 0.05 -> 0.03
+                        reg_lambda=0.5,
+                        random_state=seed,  # seed 적용
+                        n_jobs=-1,
+                        verbosity=-1
+                    )
+                elif model_type == 'cb':
+                    reg = cb.CatBoostRegressor(
+                        iterations=250,
+                        depth=7,  # 최적화: 6 -> 7
+                        learning_rate=0.09,  # 최적화: 0.08 -> 0.09
+                        subsample=0.8,  # 최적화: 0.85 -> 0.8
+                        colsample_bylevel=0.9,  # 최적화: 0.85 -> 0.9
+                        min_data_in_leaf=3,
+                        l2_leaf_reg=0.6,  # 최적화: 0.5 -> 0.6
+                        random_state=seed,  # seed 적용
+                        thread_count=-1,
+                        verbose=False
+                    )
+                
+                reg.fit(X_train_fold, y_train_fold)
+                
+                # 예측 (predict 함수가 자동으로 클리핑 등 후처리 수행)
+                fold_submission = predict(pivot_train, pairs, reg, feature_cols)
+                
+                # 예측 결과 누적
+                for _, pred_row in fold_submission.iterrows():
+                    pair_key = (pred_row['leading_item_id'], pred_row['following_item_id'])
+                    if pair_key not in model_predictions[model_name]:
+                        model_predictions[model_name][pair_key] = []
+                    model_predictions[model_name][pair_key].append(pred_row['value'])
+        
+        # 이 seed의 예측 결과 저장
+        all_seed_predictions[seed] = model_predictions
+    
+    # 모든 seed의 예측을 평균하여 모델별 최종 예측 생성
+    print("\n[Seed Ensemble] 모든 seed의 예측을 평균하여 모델별 최종 예측 생성 중...")
+    final_model_predictions = {}  # {model_name: {pair_key: [preds]}}
+    
+    for model_name in ['XGBoost', 'LightGBM', 'CatBoost']:
+        final_model_predictions[model_name] = {}
+        all_pairs_for_model = set()
+        
+        # 모든 seed에서 이 모델의 pair_key 수집
+        for seed in all_seed_predictions:
+            if model_name in all_seed_predictions[seed]:
+                all_pairs_for_model.update(all_seed_predictions[seed][model_name].keys())
+        
+        # 모든 seed의 예측을 평균
+        for pair_key in all_pairs_for_model:
+            all_preds = []
+            for seed in all_seed_predictions:
+                if model_name in all_seed_predictions[seed] and pair_key in all_seed_predictions[seed][model_name]:
+                    all_preds.extend(all_seed_predictions[seed][model_name][pair_key])
             
-            reg.fit(X_train_fold, y_train_fold)
-            
-            # 예측
-            fold_submission = predict(pivot_train, pairs, reg, feature_cols)
-            
-            # 예측 결과 누적
-            for _, pred_row in fold_submission.iterrows():
-                pair_key = (pred_row['leading_item_id'], pred_row['following_item_id'])
-                if pair_key not in model_predictions[model_name]:
-                    model_predictions[model_name][pair_key] = []
-                model_predictions[model_name][pair_key].append(pred_row['value'])
+            if len(all_preds) > 0:
+                final_model_predictions[model_name][pair_key] = all_preds
+    
+    # final_model_predictions를 model_predictions로 사용
+    model_predictions = final_model_predictions
     
     # 각 모델의 단독 성능 평가
     print("\n[2단계] 각 모델의 단독 성능 평가...")
@@ -202,9 +226,12 @@ def optimize_and_ensemble(pivot_train, pivot_for_answer, feature_cols, n_splits=
     
     # 성능 기반 가중치 조합 테스트
     weight_combinations = [
-        {'XGBoost': 0.25, 'LightGBM': 0.40, 'CatBoost': 0.35},  # 현재
+        {'XGBoost': 0.35, 'LightGBM': 0.25, 'CatBoost': 0.40},  # train.py 현재 가중치
         {'XGBoost': 0.33, 'LightGBM': 0.33, 'CatBoost': 0.34},  # 균등
-        # 성능이 좋은 모델에 더 높은 가중치
+        {'XGBoost': 0.25, 'LightGBM': 0.40, 'CatBoost': 0.35},  # 이전 가중치
+        {'XGBoost': 0.30, 'LightGBM': 0.35, 'CatBoost': 0.35},  # LightGBM 강조
+        {'XGBoost': 0.40, 'LightGBM': 0.30, 'CatBoost': 0.30},  # XGBoost 강조
+        {'XGBoost': 0.30, 'LightGBM': 0.30, 'CatBoost': 0.40},  # CatBoost 강조
     ]
     
     # 각 모델의 성능을 기반으로 가중치 계산
@@ -301,7 +328,10 @@ if __name__ == "__main__":
     feature_cols = ['b_t', 'b_t_1', 'a_t_lag', 'max_corr', 'best_lag', 
                     'b_trend', 'a_trend', 'b_ma3', 'b_change']
     
+    # train.py와 동일한 설정 사용
     best_weights, model_scores = optimize_and_ensemble(
-        pivot_train, pivot_for_answer, feature_cols
+        pivot_train, pivot_for_answer, feature_cols,
+        n_splits=5,  # train.py와 동일
+        seeds=[42, 1031, 106]  # train.py와 동일한 seed 사용
     )
 
