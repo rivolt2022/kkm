@@ -55,53 +55,117 @@ def compute_item_statistics(pivot):
 
 def find_comovement_pairs(pivot, max_lag=6, min_nonzero=12, corr_threshold=0.35):
     """
-    공행성 쌍 탐색
-    - 각 (A, B) 쌍에 대해 lag = 1 ~ max_lag까지 Pearson 상관계수 계산
-    - 절댓값이 가장 큰 상관계수와 lag를 선택
-    - |corr| >= corr_threshold이면 A→B 공행성 있다고 판단
+    공행성 쌍 탐색 (시간 윈도우별 독립 탐색 후 통합)
+    
+    전략:
+    1. 전체 기간을 여러 윈도우로 나눔 (각 18개월, 50% 오버랩)
+    2. 각 윈도우에서 독립적으로 공행성 쌍 탐색
+    3. 여러 윈도우에서 일관되게 나타나는 쌍만 최종 선택
+    4. 최종 상관계수는 전체 기간 기준으로 계산
+    
+    이 방법의 장점:
+    - 시간에 따라 변화하는 패턴도 포착 가능
+    - 일시적인 노이즈 관계는 필터링됨
+    - 일관된 관계만 선택하여 안정성 향상
     """
     items = pivot.index.to_list()
     months = pivot.columns.to_list()
     n_months = len(months)
-
-    results = []
-
-    for i, leader in tqdm(enumerate(items), total=len(items), desc="공행성 쌍 탐색"):
-        x = pivot.loc[leader].values.astype(float)
-        if np.count_nonzero(x) < min_nonzero:
-            continue
-
-        for follower in items:
-            if follower == leader:
+    
+    # 윈도우 설정: 각 18개월, 50% 오버랩
+    window_size = 18
+    window_step = window_size // 2  # 50% 오버랩
+    
+    # 윈도우별로 탐색
+    window_results = {}  # {(leader, follower): [윈도우별 결과]}
+    
+    print(f"[1단계] 시간 윈도우별 탐색 (윈도우 크기: {window_size}개월, 오버랩: 50%)...")
+    
+    for window_start in range(0, n_months - window_size + 1, window_step):
+        window_end = min(window_start + window_size, n_months)
+        window_months = months[window_start:window_end]
+        window_pivot = pivot[window_months].copy()
+        
+        print(f"  윈도우 {window_start//window_step + 1}: {window_months[0]} ~ {window_months[-1]}")
+        
+        # 이 윈도우에서 공행성 쌍 탐색
+        for i, leader in enumerate(items):
+            x = window_pivot.loc[leader].values.astype(float) if leader in window_pivot.index else np.zeros(len(window_months))
+            if np.count_nonzero(x) < min_nonzero // 2:  # 윈도우가 작으므로 임계값 낮춤
                 continue
 
-            y = pivot.loc[follower].values.astype(float)
-            if np.count_nonzero(y) < min_nonzero:
-                continue
-
-            best_lag = None
-            best_corr = 0.0
-
-            # lag = 1 ~ max_lag 탐색
-            for lag in range(1, max_lag + 1):
-                if n_months <= lag:
+            for follower in items:
+                if follower == leader:
                     continue
-                corr = safe_corr(x[:-lag], y[lag:])
-                if abs(corr) > abs(best_corr):
-                    best_corr = corr
-                    best_lag = lag
 
+                y = window_pivot.loc[follower].values.astype(float) if follower in window_pivot.index else np.zeros(len(window_months))
+                if np.count_nonzero(y) < min_nonzero // 2:
+                    continue
 
-            # 임계값 이상이면 공행성쌍으로 채택
-            if best_lag is not None and abs(best_corr) >= corr_threshold:
-                results.append({
-                    "leading_item_id": leader,
-                    "following_item_id": follower,
-                    "best_lag": best_lag,
-                    "max_corr": best_corr,
-                })
+                best_lag = None
+                best_corr = 0.0
+                window_n = len(window_months)
 
+                # lag = 1 ~ max_lag 탐색
+                for lag in range(1, min(max_lag + 1, window_n)):
+                    if window_n <= lag:
+                        continue
+                    corr = safe_corr(x[:-lag], y[lag:])
+                    if abs(corr) > abs(best_corr):
+                        best_corr = corr
+                        best_lag = lag
+
+                # 임계값 이상이면 이 윈도우에서 발견된 것으로 기록
+                if best_lag is not None and abs(best_corr) >= corr_threshold:
+                    pair_key = (leader, follower)
+                    if pair_key not in window_results:
+                        window_results[pair_key] = []
+                    window_results[pair_key].append({
+                        'lag': best_lag,
+                        'corr': best_corr,
+                        'window': window_start // window_step
+                    })
+    
+    print(f"[2단계] 윈도우 결과 통합 및 최종 평가...")
+    print(f"  발견된 후보 쌍 수: {len(window_results)}")
+    
+    # 최소 지지도: 최소 2개 윈도우에서 나타나야 함
+    min_support = max(2, (n_months // window_step) // 3)  # 전체 윈도우의 1/3 이상
+    
+    results = []
+    
+    for (leader, follower), window_data in tqdm(window_results.items(), desc="최종 평가"):
+        # 최소 지지도 확인
+        if len(window_data) < min_support:
+            continue
+        
+        # 전체 기간에서 최종 상관계수 계산
+        x = pivot.loc[leader].values.astype(float)
+        y = pivot.loc[follower].values.astype(float)
+        
+        best_lag = None
+        best_corr = 0.0
+        
+        # 전체 기간에서 최적 lag와 상관계수 찾기
+        for lag in range(1, max_lag + 1):
+            if n_months <= lag:
+                continue
+            corr = safe_corr(x[:-lag], y[lag:])
+            if abs(corr) > abs(best_corr):
+                best_corr = corr
+                best_lag = lag
+        
+        # 최종 임계값 확인 및 채택
+        if best_lag is not None and abs(best_corr) >= corr_threshold:
+            results.append({
+                "leading_item_id": leader,
+                "following_item_id": follower,
+                "best_lag": best_lag,
+                "max_corr": best_corr,
+            })
+    
     pairs = pd.DataFrame(results)
+    print(f"최종 채택된 쌍 수: {len(pairs)} (최소 {min_support}개 윈도우에서 발견)")
     return pairs
 
 
