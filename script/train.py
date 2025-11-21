@@ -66,6 +66,7 @@ def prepare_item_metadata(train, pivot):
     """
     아이템 단위 부가 정보 생성:
     - hs4 코드 (최빈값)
+    - hs2, hs3 코드 (hs4에서 추출)
     - seq_total 기반 범주 (EDA에서 사용한 cut 포맷 그대로)
     - value 시계열 통계치
     """
@@ -78,6 +79,10 @@ def prepare_item_metadata(train, pivot):
         .to_dict()
     )
     
+    # hs2, hs3 코드 추출 (hs4에서 계산)
+    item_hs2 = {item: hs4 // 100 for item, hs4 in item_hs4.items()}
+    item_hs3 = {item: hs4 // 10 for item, hs4 in item_hs4.items()}
+    
     # seq 총량 기반 범주화 (EDA 결과와 동일하게 40/80 기준)
     seq_total = train.groupby('item_id').size()
     seq_bins = [-np.inf, 40, 80, np.inf]
@@ -88,6 +93,8 @@ def prepare_item_metadata(train, pivot):
     return {
         'stats': item_stats,
         'hs4': item_hs4,
+        'hs2': item_hs2,
+        'hs3': item_hs3,
         'seq_cat': seq_cat_map,
         'seq_total': seq_total.to_dict(),
     }
@@ -230,6 +237,8 @@ def build_training_data(pivot, pairs, metadata, end_month_idx=None):
     n_months = len(months)
     item_stats = metadata['stats']
     item_hs4 = metadata['hs4']
+    item_hs2 = metadata['hs2']
+    item_hs3 = metadata['hs3']
     seq_cat_map = metadata['seq_cat']
     
     # end_month_idx가 지정되면 그 이전까지만 사용 (검증 모드)
@@ -266,7 +275,7 @@ def build_training_data(pivot, pairs, metadata, end_month_idx=None):
                 b_trend = b_t
                 a_trend = a_t_lag
 
-            # 이동평균
+            # 이동평균 (3개월)
             if t >= 2:
                 b_ma3 = np.mean(b_series[max(0, t-2):t+1])
             else:
@@ -280,9 +289,17 @@ def build_training_data(pivot, pairs, metadata, end_month_idx=None):
 
             a_stat = item_stats.get(leader, DEFAULT_STATS)
             b_stat = item_stats.get(follower, DEFAULT_STATS)
+            
+            # HS 코드 관련 피처 (핵심만 유지)
             same_hs4 = 1 if item_hs4.get(leader) == item_hs4.get(follower) else 0
+            same_hs2 = 1 if item_hs2.get(leader) == item_hs2.get(follower) else 0
+            
             seq_cat_label = seq_cat_map.get(follower, 'seq_cnt_mid')
             seq_cat_code = SEQ_CAT_TO_NUM.get(seq_cat_label, 1)
+            
+            # 상관계수와 lag의 상호작용 피처 (핵심만 유지)
+            lag_x_corr = lag * abs(corr)
+            corr_abs = abs(corr)
 
             rows.append({
                 "b_t": b_t,
@@ -299,6 +316,9 @@ def build_training_data(pivot, pairs, metadata, end_month_idx=None):
                 "a_cv": a_stat['cv'],
                 "b_cv": b_stat['cv'],
                 "same_hs4": same_hs4,
+                "same_hs2": same_hs2,
+                "lag_x_corr": lag_x_corr,
+                "corr_abs": corr_abs,
                 "b_seq_cat": seq_cat_code,
                 "a_mean": a_stat['mean'],
                 "b_mean": b_stat['mean'],
@@ -325,6 +345,8 @@ def predict(pivot, pairs, reg, feature_cols, metadata, predict_month_idx=None):
     n_months = len(months)
     item_stats = metadata['stats']
     item_hs4 = metadata['hs4']
+    item_hs2 = metadata['hs2']
+    item_hs3 = metadata['hs3']
     seq_cat_map = metadata['seq_cat']
     
     # predict_month_idx가 지정되면 해당 월을 예측 (검증 모드)
@@ -380,11 +402,19 @@ def predict(pivot, pairs, reg, feature_cols, metadata, predict_month_idx=None):
 
         a_stat = item_stats.get(leader, DEFAULT_STATS)
         b_stat = item_stats.get(follower, DEFAULT_STATS)
+        
+        # HS 코드 관련 피처 (핵심만 유지)
         same_hs4 = 1 if item_hs4.get(leader) == item_hs4.get(follower) else 0
+        same_hs2 = 1 if item_hs2.get(leader) == item_hs2.get(follower) else 0
+        
         seq_cat_label = seq_cat_map.get(follower, 'seq_cnt_mid')
         seq_cat_code = SEQ_CAT_TO_NUM.get(seq_cat_label, 1)
+        
+        # 상관계수와 lag의 상호작용 피처 (핵심만 유지)
+        lag_x_corr = lag * abs(corr)
+        corr_abs = abs(corr)
 
-        # Feature 벡터 구성
+        # Feature 벡터 구성 (핵심 피처만)
         features = {
             "b_t": b_t,
             "b_t_1": b_t_1,
@@ -400,6 +430,9 @@ def predict(pivot, pairs, reg, feature_cols, metadata, predict_month_idx=None):
             "a_cv": a_stat['cv'],
             "b_cv": b_stat['cv'],
             "same_hs4": same_hs4,
+            "same_hs2": same_hs2,
+            "lag_x_corr": lag_x_corr,
+            "corr_abs": corr_abs,
             "b_seq_cat": seq_cat_code,
             "a_mean": a_stat['mean'],
             "b_mean": b_stat['mean'],
@@ -414,9 +447,21 @@ def predict(pivot, pairs, reg, feature_cols, metadata, predict_month_idx=None):
         # 후처리: 음수 예측 → 0으로 변환
         y_pred = max(0.0, float(y_pred))
         
-        # 합리적인 범위로 클리핑 (b_t 기준 0.1배 ~ 10배 범위로 제한)
+        # 합리적인 범위로 클리핑 (보수적인 후처리로 일반화 성능 향상)
+        # b_t가 0이 아닌 경우: b_t 기준 0.1배 ~ 10배 범위로 제한 (보수적)
+        # b_t가 0인 경우: a_t_lag 기반으로 추정
         if b_t > 0:
+            # 보수적인 범위로 제한 (과적합 방지)
             y_pred = np.clip(y_pred, b_t * 0.1, b_t * 10.0)
+        elif a_t_lag > 0:
+            # b_t가 0이지만 a_t_lag가 있는 경우, 보수적으로 추정
+            estimated = a_t_lag * (1.0 + corr * 0.05)  # 더 보수적
+            y_pred = np.clip(y_pred, estimated * 0.1, estimated * 5.0)  # 범위 축소
+        else:
+            # 둘 다 0인 경우, 평균값 기반으로 제한
+            avg_value = (a_stat['mean'] + b_stat['mean']) / 2.0
+            if avg_value > 0:
+                y_pred = np.clip(y_pred, avg_value * 0.01, avg_value * 3.0)  # 범위 축소
         
         # 소수점 → 정수 변환
         y_pred = int(round(y_pred))
@@ -510,44 +555,44 @@ def cross_validate_with_kfold(pivot, pairs, feature_cols, metadata,
                 y_train_fold_log = np.log1p(y_train_fold)
                 
                 # 모델별 학습 (seed 적용)
-                # 하이퍼파라미터는 optimize_hyperparameters_grid.py 실행 결과 반영
+                # 과적합 방지를 위한 보수적인 하이퍼파라미터 (일반화 성능 우선)
                 if model_type == 'xgb':
                     reg = xgb.XGBRegressor(
-                        n_estimators=250,
-                        max_depth=7,  # 최적화: 6 -> 7
-                        learning_rate=0.09,  # 최적화: 0.08 -> 0.09
-                        subsample=0.8,  # 최적화: 0.85 -> 0.8
-                        colsample_bytree=0.9,  # 최적화: 0.85 -> 0.9
-                        min_child_weight=3,
-                        reg_alpha=0.05,
-                        reg_lambda=0.5,
+                        n_estimators=250,  # 복잡도 감소
+                        max_depth=6,  # 복잡도 감소 (8 -> 6)
+                        learning_rate=0.1,  # 학습률 증가로 빠른 수렴
+                        subsample=0.8,  # 과적합 방지
+                        colsample_bytree=0.8,  # 과적합 방지
+                        min_child_weight=5,  # 과적합 방지 강화
+                        reg_alpha=0.1,  # 정규화 유지
+                        reg_lambda=1.5,  # 정규화 강화 (1.0 -> 1.5)
                         random_state=seed,  # seed 적용
                         n_jobs=-1,
                         verbosity=0
                     )
                 elif model_type == 'lgb':
                     reg = lgb.LGBMRegressor(
-                        n_estimators=250,
-                        max_depth=7,  # 최적화: 6 -> 7
-                        learning_rate=0.07,  # 최적화: 0.08 -> 0.07
-                        subsample=0.8,  # 최적화: 0.85 -> 0.8
-                        colsample_bytree=0.85,
-                        min_child_samples=3,
-                        reg_alpha=0.03,  # 최적화: 0.05 -> 0.03
-                        reg_lambda=0.5,
+                        n_estimators=250,  # 복잡도 감소
+                        max_depth=6,  # 복잡도 감소 (8 -> 6)
+                        learning_rate=0.1,  # 학습률 증가로 빠른 수렴
+                        subsample=0.8,  # 과적합 방지
+                        colsample_bytree=0.8,  # 과적합 방지
+                        min_child_samples=10,  # 과적합 방지 강화 (5 -> 10)
+                        reg_alpha=0.1,  # 정규화 유지
+                        reg_lambda=1.5,  # 정규화 강화 (1.0 -> 1.5)
                         random_state=seed,  # seed 적용
                         n_jobs=-1,
                         verbosity=-1
                     )
                 elif model_type == 'cb':
                     reg = cb.CatBoostRegressor(
-                        iterations=250,
-                        depth=7,  # 최적화: 6 -> 7
-                        learning_rate=0.09,  # 최적화: 0.08 -> 0.09
-                        subsample=0.8,  # 최적화: 0.85 -> 0.8
-                        colsample_bylevel=0.9,  # 최적화: 0.85 -> 0.9
-                        min_data_in_leaf=3,
-                        l2_leaf_reg=0.6,  # 최적화: 0.5 -> 0.6
+                        iterations=250,  # 복잡도 감소
+                        depth=6,  # 복잡도 감소 (8 -> 6)
+                        learning_rate=0.1,  # 학습률 증가로 빠른 수렴
+                        subsample=0.8,  # 과적합 방지
+                        colsample_bylevel=0.8,  # 과적합 방지
+                        min_data_in_leaf=10,  # 과적합 방지 강화 (5 -> 10)
+                        l2_leaf_reg=1.5,  # 정규화 강화 (1.0 -> 1.5)
                         random_state=seed,  # seed 적용
                         thread_count=-1,
                         verbose=False
@@ -758,9 +803,10 @@ def main():
 
     # 3. 공행성쌍 탐색
     print("\n[3단계] 공행성 쌍 탐색 중...")
-    # F1 Score 향상을 위한 보수적인 파라미터 조정:
-    # - corr_threshold: 0.35 → 0.34 (약간만 낮춰서 과적합 방지)
+    # 과적합 방지를 위한 보수적인 파라미터:
+    # - corr_threshold: 0.34 (너무 낮추지 않아서 노이즈 관계 필터링)
     # - min_nonzero: 12 유지 (데이터 품질 유지)
+    # - max_lag: 6 유지 (EDA에서 1~6 고르게 분포)
     corr_threshold = 0.34
     min_nonzero = 12
     
@@ -782,12 +828,15 @@ def main():
         print("경고: 공행성 쌍이 발견되지 않았습니다.")
         return
 
-    # 4. Feature 컬럼 정의
+    # 4. Feature 컬럼 정의 (과적합 방지를 위한 핵심 피처만 선택)
+    # 중요도가 높고 일반화 성능이 좋은 피처만 유지
     feature_cols = [
         'b_t', 'b_t_1', 'a_t_lag', 'max_corr', 'best_lag',
-        'b_trend', 'a_trend', 'b_ma3', 'b_change',
-        'a_zero_ratio', 'b_zero_ratio', 'a_cv', 'b_cv',
-        'same_hs4', 'b_seq_cat', 'a_mean', 'b_mean'
+        'b_trend', 'a_trend', 'b_ma3', 'b_change',  # 기본 시계열 피처
+        'a_zero_ratio', 'b_zero_ratio', 'a_cv', 'b_cv',  # 통계 피처
+        'same_hs4', 'same_hs2',  # HS 코드 피처 (핵심만)
+        'lag_x_corr', 'corr_abs',  # 상관계수 상호작용 (핵심만)
+        'b_seq_cat', 'a_mean', 'b_mean'  # 메타데이터
     ]
 
     # 5. KFold 교차 검증 수행
