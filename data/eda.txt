@@ -1,0 +1,2041 @@
+00. 패키지 Import
+
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
+from tqdm import tqdm
+
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# 한글 폰트 설정
+import matplotlib
+import matplotlib.font_manager as fm
+
+font_path = 'C:\\Windows\\Fonts\\H2GTRM.TTF' # 윈도우 OS 폰트 경로
+
+font_prop = fm.FontProperties(fname = font_path) 
+
+
+font_name = font_prop.get_name() # 폰트명
+
+matplotlib.rc('font', family=font_name)
+
+plt.rc('axes', unicode_minus=False) # matplotlib의 기본적인 유니코드 minus폰트사용 중지
+01 데이터 수집 및 로드
+
+train = pd.read_csv('../data/train.csv')
+train.head(3)
+item_id	year	month	seq	type	hs4	weight	quantity	value
+0	DEWLVASR	2022	1	1.0	1	3038	14858.0	0.0	32688.0
+1	ELQGMQWE	2022	1	1.0	1	2002	62195.0	0.0	110617.0
+2	AHMDUILJ	2022	1	1.0	1	2102	18426.0	0.0	72766.0
+02. 데이터구조 및 변수 이해
+
+print(train.shape) # 10836 행 9 열
+print(train.dtypes)
+train.info()
+(10836, 9)
+item_id      object
+year          int64
+month         int64
+seq         float64
+type          int64
+hs4           int64
+weight      float64
+quantity    float64
+value       float64
+dtype: object
+<class 'pandas.core.frame.DataFrame'>
+RangeIndex: 10836 entries, 0 to 10835
+Data columns (total 9 columns):
+ #   Column    Non-Null Count  Dtype  
+---  ------    --------------  -----  
+ 0   item_id   10836 non-null  object 
+ 1   year      10836 non-null  int64  
+ 2   month     10836 non-null  int64  
+ 3   seq       10836 non-null  float64
+ 4   type      10836 non-null  int64  
+ 5   hs4       10836 non-null  int64  
+ 6   weight    10836 non-null  float64
+ 7   quantity  10836 non-null  float64
+ 8   value     10836 non-null  float64
+dtypes: float64(4), int64(4), object(1)
+memory usage: 762.0+ KB
+03. 데이터요약 및 기술통계
+
+train.describe()
+year	month	seq	type	hs4	weight	quantity	value
+count	10836.000000	10836.000000	10836.000000	10836.0	10836.000000	1.083600e+04	1.083600e+04	1.083600e+04
+mean	2023.331395	6.108435	2.034238	1.0	4821.969546	1.098413e+06	8.633771e+04	1.739442e+06
+std	1.049357	3.392649	0.813380	0.0	2296.892536	5.153790e+06	7.614669e+06	5.457480e+06
+min	2022.000000	1.000000	1.000000	1.0	1210.000000	0.000000e+00	0.000000e+00	0.000000e+00
+25%	2022.000000	3.000000	1.000000	1.0	2833.000000	3.457500e+02	0.000000e+00	1.150675e+04
+50%	2023.000000	6.000000	2.000000	1.0	3824.000000	6.532500e+03	0.000000e+00	1.250070e+05
+75%	2024.000000	9.000000	3.000000	1.0	7202.000000	1.555108e+05	0.000000e+00	1.039764e+06
+max	2025.000000	12.000000	3.000000	1.0	9403.000000	1.104919e+08	7.925990e+08	1.110414e+08
+
+train.describe(include='object')
+item_id
+count	10836
+unique	100
+top	ELQGMQWE
+freq	129
+
+train.info()
+<class 'pandas.core.frame.DataFrame'>
+RangeIndex: 10836 entries, 0 to 10835
+Data columns (total 9 columns):
+ #   Column    Non-Null Count  Dtype  
+---  ------    --------------  -----  
+ 0   item_id   10836 non-null  object 
+ 1   year      10836 non-null  int64  
+ 2   month     10836 non-null  int64  
+ 3   seq       10836 non-null  float64
+ 4   type      10836 non-null  int64  
+ 5   hs4       10836 non-null  int64  
+ 6   weight    10836 non-null  float64
+ 7   quantity  10836 non-null  float64
+ 8   value     10836 non-null  float64
+dtypes: float64(4), int64(4), object(1)
+memory usage: 762.0+ KB
+04. 결측치, 이상치
+결측치(NA)는 없음
+아래 'weight', 'value'의 boxplot에서 보이는 outliers들은 실제 이상치가 아닌 정상 무역 데이터
+
+train.plot(kind='box')
+plt.xticks(rotation=45)
+plt.show()
+
+
+sns.boxplot(data=train, x= 'month'
+            , y="weight"
+            , hue='month'
+            )
+plt.show()
+
+
+sns.boxplot(data=train, x= 'month'
+            , y="value"
+            , hue='month'
+            )
+plt.show()
+
+05. 변수분포 시각화
+
+sns.countplot(data=train, x="year", hue="seq")
+plt.show()
+
+
+sns.countplot(data=train, x="month", hue="seq")
+plt.show()
+
+
+sns.barplot(data=train, x="year", y="value")
+plt.show()
+
+
+sns.barplot(data=train, x="month", y="value")
+plt.show()
+
+06. 변수간 관계 시각화
+
+# weight, value 간의 관계
+sns.scatterplot(train, x="weight", y="value") 
+plt.show()
+
+
+sns.pairplot(train, hue="seq")
+plt.show()
+
+07. 데이터 전처리, 변수분석, 상관관계 및 feature engineering
+
+print(f'train.shape = {train.shape}')
+display(train.apply(lambda x: len(np.unique(x)), axis=0))
+display(train.apply(lambda x: np.unique(x), axis=0))
+train.shape = (10836, 9)
+item_id      100
+year           4
+month         12
+seq            3
+type           1
+hs4           71
+weight      7438
+quantity    1226
+value       9686
+dtype: int64
+item_id     [AANGBULD, AHMDUILJ, ANWUJOKX, APQGTRMF, ATLDM...
+year                                 [2022, 2023, 2024, 2025]
+month                 [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+seq                                           [1.0, 2.0, 3.0]
+type                                                      [1]
+hs4         [1210, 2002, 2102, 2501, 2529, 2612, 2701, 271...
+weight      [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, ...
+quantity    [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, ...
+value       [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, ...
+dtype: object
+
+### item-id 와 hs4 대응관계 분석 
+train['hs4'].value_counts()
+hs4
+2805    646
+3824    535
+2811    516
+8501    423
+8505    387
+       ... 
+4302      9
+7142      8
+2612      6
+3024      5
+3003      2
+Name: count, Length: 71, dtype: int64
+
+display(train.groupby(["item_id", "year", "month"], as_index=False)["value"].size().sort_values(by='size', ascending=False))
+# 즉  한달안에 같은 물건이 여러번 팔릴수 있다(3번까지 ==> seq컬럼의 1, 2,3 으로 그달에 팔린 횟수를 알수 있음 )
+
+train[(train['item_id'] == 'ZXERAXWP') &  (train['year'] == 2024) & (train['month'] == 3)]
+item_id	year	month	size
+3759	ZXERAXWP	2024	3	3
+3758	ZXERAXWP	2024	2	3
+3757	ZXERAXWP	2024	1	3
+3756	ZXERAXWP	2023	12	3
+3755	ZXERAXWP	2023	11	3
+...	...	...	...	...
+294	BLANHGYY	2022	2	1
+303	BLANHGYY	2023	3	1
+101	APQGTRMF	2023	10	1
+106	APQGTRMF	2024	3	1
+1	AANGBULD	2022	2	1
+3776 rows × 4 columns
+
+item_id	year	month	seq	type	hs4	weight	quantity	value
+6572	ZXERAXWP	2024	3	1.0	1	4802	281.0	0.0	5579.0
+6654	ZXERAXWP	2024	3	2.0	1	4802	11.0	0.0	742.0
+6739	ZXERAXWP	2024	3	3.0	1	4802	17.0	0.0	1179.0
+
+train.groupby(["hs4"], as_index=False)["item_id"].apply(lambda x: len(np.unique(x))).sort_values(by='item_id', ascending=False).reset_index(drop=True)['item_id']
+0     6
+1     5
+2     5
+3     4
+4     3
+     ..
+66    1
+67    1
+68    1
+69    1
+70    1
+Name: item_id, Length: 71, dtype: int64
+
+train.groupby(["hs4"], as_index=False)["item_id"].apply(lambda x: np.unique(x))
+hs4	item_id
+0	1210	[JBVHSUWY]
+1	2002	[ELQGMQWE]
+2	2102	[AHMDUILJ]
+3	2501	[XIPPENFQ]
+4	2529	[FTSVTTSR, XMKRPGLB]
+...	...	...
+66	8527	[VMAQSTJE]
+67	8708	[XIFHSOWQ]
+68	8714	[FITUEHWN, UGEQLMXM]
+69	9022	[BLANHGYY]
+70	9403	[BUZIIBYG]
+71 rows × 2 columns
+
+
+tmp_df = train.groupby(["hs4"], as_index=False)["item_id"].apply(lambda x: np.unique(x))
+tmp_df['item_id_len'] = train.groupby(["hs4"], as_index=False)["item_id"].apply(lambda x: len(np.unique(x)))['item_id']
+hs4_tmp_df = tmp_df.sort_values(by='item_id_len', ascending=False).reset_index(drop=True)
+
+display(hs4_tmp_df.head(20))
+print(hs4_tmp_df['hs4'][:20].values) # 
+hs4_tmp_df['item_id_len'][:20].sum() # 
+hs4	item_id	item_id_len
+0	2805	[BSRMSVTC, DJBLNPNC, RCBZUSIM, SUOYXCHP, WQMVC...	6
+1	3824	[FCYBOAXC, IGDVVKUD, LPHPPJUG, PYZMVUWD, SNHYO...	5
+2	8501	[GKQIJYDH, KFQSHBNH, QKXNTIIB, RJCAXSGH, UQYUI...	5
+3	2811	[DNMPSKTB, RJGPVEXX, VWMBASNE, WPQXWHYO]	4
+4	8102	[FQCLOEXA, KEUWZRKO, UIFPPCLR]	3
+5	8505	[GYHKIVQT, ROACSLMG, VBYCLTYZ]	3
+6	3815	[OJIFIHMZ, STZDBITS, XIIEJNEE]	3
+7	2807	[DDEXPPXU, LLHREMKS, YSYHGLQK]	3
+8	7207	[SDWAYPIK, TGOELCAG]	2
+9	2846	[FRHNWLNI, MBSBZBXA]	2
+10	3102	[BTMOEMEP, LRVGFDFM]	2
+11	2529	[FTSVTTSR, XMKRPGLB]	2
+12	8714	[FITUEHWN, UGEQLMXM]	2
+13	1210	[JBVHSUWY]	1
+14	2002	[ELQGMQWE]	1
+15	2701	[FWUCPMMW]	1
+16	2612	[RUVXNNVA]	1
+17	2501	[XIPPENFQ]	1
+18	2102	[AHMDUILJ]	1
+19	2836	[HXYSSRXE]	1
+[2805 3824 8501 2811 8102 8505 3815 2807 7207 2846 3102 2529 8714 1210
+ 2002 2701 2612 2501 2102 2836]
+np.int64(49)
+
+dct_hs4_tmp_df  = hs4_tmp_df[['hs4', 'item_id']].set_index('hs4').to_dict()['item_id']
+list(dct_hs4_tmp_df[2805]) # hs4 코드  = 2805 의 경우에 포함된 상품들
+['BSRMSVTC', 'DJBLNPNC', 'RCBZUSIM', 'SUOYXCHP', 'WQMVCOEM', 'ZKENOUDA']
+monthly data 탐색
+(한 상품에 대해 한달에 3번까지 팔릴수 있는데, 그달에 팔린 모든 상품수를 합한 값을 본다 )
+
+
+# year, month, item_id 기준으로 value 합산 (seq만 다르다면 value 합산)
+monthly = (
+    train
+    .groupby(["item_id", "year", "month"], as_index=False)["value"]
+    .sum()
+)
+
+# year, month를 하나의 키(ym)로 묶기
+monthly["ym"] = pd.to_datetime(
+    monthly["year"].astype(str) + "-" + monthly["month"].astype(str).str.zfill(2) # 'ym' as 'datetime64[ns]'
+)
+
+monthly.head()
+item_id	year	month	value	ym
+0	AANGBULD	2022	1	14276.0	2022-01-01
+1	AANGBULD	2022	2	52347.0	2022-02-01
+2	AANGBULD	2022	3	53549.0	2022-03-01
+3	AANGBULD	2022	5	26997.0	2022-05-01
+4	AANGBULD	2022	6	84489.0	2022-06-01
+
+pivot = (
+    monthly
+    .pivot(index="item_id", columns="ym", values="value")
+    .fillna(0.0)
+)
+
+pivot.head()
+ym	2022-01-01	2022-02-01	2022-03-01	2022-04-01	2022-05-01	2022-06-01	2022-07-01	2022-08-01	2022-09-01	2022-10-01	...	2024-10-01	2024-11-01	2024-12-01	2025-01-01	2025-02-01	2025-03-01	2025-04-01	2025-05-01	2025-06-01	2025-07-01
+item_id																					
+AANGBULD	14276.0	52347.0	53549.0	0.0	26997.0	84489.0	0.0	0.0	0.0	0.0	...	428725.0	144248.0	26507.0	25691.0	25805.0	0.0	38441.0	0.0	441275.0	533478.0
+AHMDUILJ	242705.0	120847.0	197317.0	126142.0	71730.0	149138.0	186617.0	169995.0	140547.0	89292.0	...	123085.0	143451.0	78649.0	125098.0	80404.0	157401.0	115509.0	127473.0	89479.0	101317.0
+ANWUJOKX	0.0	0.0	0.0	63580.0	81670.0	26424.0	8470.0	0.0	0.0	80475.0	...	0.0	0.0	0.0	27980.0	0.0	0.0	0.0	0.0	0.0	0.0
+APQGTRMF	383999.0	512813.0	217064.0	470398.0	539873.0	582317.0	759980.0	216019.0	537693.0	205326.0	...	683581.0	2147.0	0.0	25013.0	77.0	20741.0	2403.0	3543.0	32430.0	40608.0
+ATLDMDBO	143097177.0	103568323.0	118403737.0	121873741.0	115024617.0	65716075.0	146216818.0	97552978.0	72341427.0	87454167.0	...	60276050.0	30160198.0	42613728.0	64451013.0	38667429.0	29354408.0	42450439.0	37136720.0	32181798.0	57090235.0
+5 rows × 43 columns
+
+
+monthly['ym'].min(), monthly['ym'].max() # 
+(Timestamp('2022-01-01 00:00:00'), Timestamp('2025-07-01 00:00:00'))
+
+for i, group in enumerate(monthly.groupby("item_id")[['item_id','ym', 'value']]):
+    print(f'i = {i+1}, item name: {group[0]}')
+   
+    fig = plt.figure(figsize=(12,4))
+
+    ax = plt.gca()
+    # 상품별 월별 무역량(월 최대 3회 교역)
+    ax.plot(group[1]["ym"], group[1]["value"], label=f'pid={group[0]}', marker='d')
+    ax.set_xlim([monthly['ym'].min(), monthly['ym'].max()])
+    ax.legend()
+    ax.grid()
+    if i==5: break
+
+
+plt.ylabel("무역량")
+plt.show()  
+
+i = 1, item name: AANGBULD
+i = 2, item name: AHMDUILJ
+i = 3, item name: ANWUJOKX
+i = 4, item name: APQGTRMF
+i = 5, item name: ATLDMDBO
+i = 6, item name: AXULOHBQ
+
+
+
+
+
+
+
+topN_hs4 = hs4_tmp_df['hs4'].values
+print(f'top20_hs4 : {topN_hs4[:20]}') # [2805 3824 8501 2811 8102 8505 3815 2807 7207 2846 3102 2529 8714 1210 2002 2701 2612 2501 2102 2836]
+
+
+sel_topN_hs4 = 1
+print(f'top{sel_topN_hs4}_hs4={topN_hs4[sel_topN_hs4-1]}, {len(dct_hs4_tmp_df[topN_hs4[sel_topN_hs4-1]])}개 아이템, {dct_hs4_tmp_df[topN_hs4[sel_topN_hs4-1]]}') # top1_hs4 : ['BSRMSVTC' 'DJBLNPNC' 'RCBZUSIM' 'SUOYXCHP' 'WQMVCOEM' 'ZKENOUDA']
+
+df_hm_plot = pd.DataFrame()
+j= 0
+fig = plt.figure(figsize=(12,4))
+for i, group in enumerate(monthly.groupby("item_id")[['item_id','ym', 'value']]):
+    if group[0] in dct_hs4_tmp_df[topN_hs4[sel_topN_hs4-1]]:
+        j += 1
+        print(f'index = {i+1}, {j}th item, item name: {group[0]}')
+
+        df_hm_plot = pd.concat([df_hm_plot, group[1]], axis=0)
+
+        ax = plt.gca()
+        ax.plot(group[1]["ym"], (group[1]["value"]- group[1]["value"].min())/(group[1]["value"].max()- group[1]["value"].min()), label=f'pid={group[0]}', marker='d')
+
+        ax.set_xlim([monthly['ym'].min(), monthly['ym'].max()])
+        ax.legend()
+        ax.grid()
+        
+    
+display(df_hm_plot)
+fig_sns = plt.figure(figsize=(8,6))
+corr_mat= pd.pivot_table(df_hm_plot, index='ym', columns='item_id', values='value', fill_value=0).corr()
+sns.heatmap(corr_mat, annot=True, fmt=".2f",vmin=-1, vmax=1, cbar_kws={'ticks': [-1, -0.5, 0, 0.5, 1]}, center=0 )
+
+plt.show()
+top20_hs4 : [2805 3824 8501 2811 8102 8505 3815 2807 7207 2846 3102 2529 8714 1210
+ 2002 2701 2612 2501 2102 2836]
+top1_hs4=2805, 6개 아이템, ['BSRMSVTC' 'DJBLNPNC' 'RCBZUSIM' 'SUOYXCHP' 'WQMVCOEM' 'ZKENOUDA']
+index = 10, 1th item, item name: BSRMSVTC
+index = 17, 2th item, item name: DJBLNPNC
+index = 66, 3th item, item name: RCBZUSIM
+index = 76, 4th item, item name: SUOYXCHP
+index = 90, 5th item, item name: WQMVCOEM
+index = 99, 6th item, item name: ZKENOUDA
+item_id	ym	value
+323	BSRMSVTC	2022-01-01	1216269.0
+324	BSRMSVTC	2022-02-01	156005.0
+325	BSRMSVTC	2022-03-01	801085.0
+326	BSRMSVTC	2022-04-01	365605.0
+327	BSRMSVTC	2022-05-01	168725.0
+...	...	...	...
+3728	ZKENOUDA	2025-03-01	319283.0
+3729	ZKENOUDA	2025-04-01	443958.0
+3730	ZKENOUDA	2025-05-01	329906.0
+3731	ZKENOUDA	2025-06-01	461599.0
+3732	ZKENOUDA	2025-07-01	327761.0
+235 rows × 3 columns
+
+
+
+
+sel_topN_hs4 = 2
+print(f'top{sel_topN_hs4}_hs4={topN_hs4[sel_topN_hs4-1]}, {len(dct_hs4_tmp_df[topN_hs4[sel_topN_hs4-1]])}개 아이템, {dct_hs4_tmp_df[topN_hs4[sel_topN_hs4-1]]}') # top1_hs4 : ['BSRMSVTC' 'DJBLNPNC' 'RCBZUSIM' 'SUOYXCHP' 'WQMVCOEM' 'ZKENOUDA']
+
+df_hm_plot = pd.DataFrame()
+j= 0
+fig = plt.figure(figsize=(12,4))
+for i, group in enumerate(monthly.groupby("item_id")[['item_id','ym', 'value']]):
+    if group[0] in dct_hs4_tmp_df[topN_hs4[sel_topN_hs4-1]]:
+        j += 1
+        print(f'index = {i+1}, {j}th item, item name: {group[0]}')
+
+        df_hm_plot = pd.concat([df_hm_plot, group[1]], axis=0)
+
+        ax = plt.gca()
+        ax.plot(group[1]["ym"], (group[1]["value"]- group[1]["value"].min())/(group[1]["value"].max()- group[1]["value"].min()), label=f'pid={group[0]}', marker='d')
+        ax.set_xlim([monthly['ym'].min(), monthly['ym'].max()])
+        ax.legend()
+        ax.grid()
+        
+
+fig_sns = plt.figure(figsize=(8,6))
+corr_mat= pd.pivot_table(df_hm_plot, index='ym', columns='item_id', values='value', fill_value=0).corr()
+sns.heatmap(corr_mat, annot=True, fmt=".2f", vmin=-1, vmax=1, cbar_kws={'ticks': [-1, -0.5, 0, 0.5, 1]}, center=0)
+plt.show()
+top2_hs4=3824, 5개 아이템, ['FCYBOAXC' 'IGDVVKUD' 'LPHPPJUG' 'PYZMVUWD' 'SNHYOVBM']
+index = 22, 1th item, item name: FCYBOAXC
+index = 35, 2th item, item name: IGDVVKUD
+index = 45, 3th item, item name: LPHPPJUG
+index = 59, 4th item, item name: PYZMVUWD
+index = 74, 5th item, item name: SNHYOVBM
+
+
+
+sel_topN_hs4 = 3
+print(f'top{sel_topN_hs4}_hs4={topN_hs4[sel_topN_hs4-1]}, {len(dct_hs4_tmp_df[topN_hs4[sel_topN_hs4-1]])}개 아이템, {dct_hs4_tmp_df[topN_hs4[sel_topN_hs4-1]]}') # top1_hs4 : ['BSRMSVTC' 'DJBLNPNC' 'RCBZUSIM' 'SUOYXCHP' 'WQMVCOEM' 'ZKENOUDA']
+
+df_hm_plot = pd.DataFrame()
+j= 0
+fig = plt.figure(figsize=(12,4))
+for i, group in enumerate(monthly.groupby("item_id")[['item_id','ym', 'value']]):
+    if group[0] in dct_hs4_tmp_df[topN_hs4[sel_topN_hs4-1]]:
+        j += 1
+        print(f'index = {i+1}, {j}th item, item name: {group[0]}')
+
+        df_hm_plot = pd.concat([df_hm_plot, group[1]], axis=0)
+
+        ax = plt.gca()
+        ax.plot(group[1]["ym"], (group[1]["value"]- group[1]["value"].min())/(group[1]["value"].max()- group[1]["value"].min()), label=f'pid={group[0]}', marker='d')
+        ax.set_xlim([monthly['ym'].min(), monthly['ym'].max()])
+        ax.legend()
+        ax.grid()
+        
+
+fig_sns = plt.figure(figsize=(8,6))
+corr_mat= pd.pivot_table(df_hm_plot, index='ym', columns='item_id', values='value', fill_value=0).corr()
+sns.heatmap(corr_mat, annot=True, fmt=".2f",vmin=-1, vmax=1, cbar_kws={'ticks': [-1, -0.5, 0, 0.5, 1]}, center=0)
+plt.show()
+top3_hs4=8501, 5개 아이템, ['GKQIJYDH' 'KFQSHBNH' 'QKXNTIIB' 'RJCAXSGH' 'UQYUIVVR']
+index = 30, 1th item, item name: GKQIJYDH
+index = 42, 2th item, item name: KFQSHBNH
+index = 61, 3th item, item name: QKXNTIIB
+index = 67, 4th item, item name: RJCAXSGH
+index = 81, 5th item, item name: UQYUIVVR
+
+
+
+sel_topN_hs4 = 4
+print(f'top{sel_topN_hs4}_hs4={topN_hs4[sel_topN_hs4-1]}, {len(dct_hs4_tmp_df[topN_hs4[sel_topN_hs4-1]])}개 아이템, {dct_hs4_tmp_df[topN_hs4[sel_topN_hs4-1]]}') # top1_hs4 : ['BSRMSVTC' 'DJBLNPNC' 'RCBZUSIM' 'SUOYXCHP' 'WQMVCOEM' 'ZKENOUDA']
+
+j= 0
+for i, group in enumerate(monthly.groupby("item_id")[['item_id','ym', 'value']]):
+    if group[0] in dct_hs4_tmp_df[topN_hs4[sel_topN_hs4-1]]:
+        j += 1
+        print(f'index = {i+1}, {j}th item, item name: {group[0]}')
+
+        fig = plt.figure(figsize=(12,4))
+
+        ax = plt.gca()
+        ax.plot(group[1]["ym"], group[1]["value"], label=f'pid={group[0]}', marker='d')
+        ax.set_xlim([monthly['ym'].min(), monthly['ym'].max()])
+        ax.legend()
+        ax.grid()
+top4_hs4=2811, 4개 아이템, ['DNMPSKTB' 'RJGPVEXX' 'VWMBASNE' 'WPQXWHYO']
+index = 18, 1th item, item name: DNMPSKTB
+index = 68, 2th item, item name: RJGPVEXX
+index = 86, 3th item, item name: VWMBASNE
+index = 89, 4th item, item name: WPQXWHYO
+
+
+
+
+
+sel_topN_hs4 = 4
+print(f'top{sel_topN_hs4}_hs4={topN_hs4[sel_topN_hs4-1]}, {len(dct_hs4_tmp_df[topN_hs4[sel_topN_hs4-1]])}개 아이템, {dct_hs4_tmp_df[topN_hs4[sel_topN_hs4-1]]}') # top1_hs4 : ['BSRMSVTC' 'DJBLNPNC' 'RCBZUSIM' 'SUOYXCHP' 'WQMVCOEM' 'ZKENOUDA']
+
+df_hm_plot = pd.DataFrame()
+j= 0
+fig = plt.figure(figsize=(12,4))
+for i, group in enumerate(monthly.groupby("item_id")[['item_id','ym', 'value']]):
+    if group[0] in dct_hs4_tmp_df[topN_hs4[sel_topN_hs4-1]]:
+        j += 1
+        print(f'index = {i+1}, {j}th item, item name: {group[0]}')
+
+        df_hm_plot = pd.concat([df_hm_plot, group[1]], axis=0)
+
+        ax = plt.gca()
+        ax.plot(group[1]["ym"], (group[1]["value"]- group[1]["value"].min())/(group[1]["value"].max()- group[1]["value"].min()), label=f'pid={group[0]}', marker='d')
+        ax.set_xlim([monthly['ym'].min(), monthly['ym'].max()])
+        ax.legend()
+        ax.grid()
+        
+
+fig_sns = plt.figure(figsize=(8,6))
+corr_mat= pd.pivot_table(df_hm_plot, index='ym', columns='item_id', values='value', fill_value=0).corr()
+sns.heatmap(corr_mat, annot=True, fmt=".2f",vmin=-1, vmax=1, cbar_kws={'ticks': [-1, -0.5, 0, 0.5, 1]}, center=0)
+top4_hs4=2811, 4개 아이템, ['DNMPSKTB' 'RJGPVEXX' 'VWMBASNE' 'WPQXWHYO']
+index = 18, 1th item, item name: DNMPSKTB
+index = 68, 2th item, item name: RJGPVEXX
+index = 86, 3th item, item name: VWMBASNE
+index = 89, 4th item, item name: WPQXWHYO
+<Axes: xlabel='item_id', ylabel='item_id'>
+
+
+
+sel_topN_hs4 = 5
+print(f'top{sel_topN_hs4}_hs4={topN_hs4[sel_topN_hs4-1]}, {len(dct_hs4_tmp_df[topN_hs4[sel_topN_hs4-1]])}개 아이템, {dct_hs4_tmp_df[topN_hs4[sel_topN_hs4-1]]}') # top1_hs4 : ['BSRMSVTC' 'DJBLNPNC' 'RCBZUSIM' 'SUOYXCHP' 'WQMVCOEM' 'ZKENOUDA']
+
+j= 0
+for i, group in enumerate(monthly.groupby("item_id")[['item_id','ym', 'value']]):
+    if group[0] in dct_hs4_tmp_df[topN_hs4[sel_topN_hs4-1]]:
+        j += 1
+        print(f'index = {i+1}, {j}th item, item name: {group[0]}')
+
+        fig = plt.figure(figsize=(12,4))
+
+        ax = plt.gca()
+        ax.plot(group[1]["ym"], group[1]["value"], label=f'pid={group[0]}', marker='d')
+        ax.set_xlim([monthly['ym'].min(), monthly['ym'].max()])
+        ax.legend()
+        ax.grid()
+        
+plt.show()
+top5_hs4=8102, 3개 아이템, ['FQCLOEXA' 'KEUWZRKO' 'UIFPPCLR']
+index = 25, 1th item, item name: FQCLOEXA
+index = 41, 2th item, item name: KEUWZRKO
+index = 80, 3th item, item name: UIFPPCLR
+
+
+
+
+sel_topN_hs4 = 5
+print(f'top{sel_topN_hs4}_hs4={topN_hs4[sel_topN_hs4-1]}, {len(dct_hs4_tmp_df[topN_hs4[sel_topN_hs4-1]])}개 아이템, {dct_hs4_tmp_df[topN_hs4[sel_topN_hs4-1]]}') # top1_hs4 : ['BSRMSVTC' 'DJBLNPNC' 'RCBZUSIM' 'SUOYXCHP' 'WQMVCOEM' 'ZKENOUDA']
+
+df_hm_plot = pd.DataFrame()
+j= 0
+fig = plt.figure(figsize=(12,4))
+for i, group in enumerate(monthly.groupby("item_id")[['item_id','ym', 'value']]):
+    if group[0] in dct_hs4_tmp_df[topN_hs4[sel_topN_hs4-1]]:
+        j += 1
+        print(f'index = {i+1}, {j}th item, item name: {group[0]}')
+
+        df_hm_plot = pd.concat([df_hm_plot, group[1]], axis=0)
+
+        ax = plt.gca()
+        ax.plot(group[1]["ym"], (group[1]["value"]- group[1]["value"].min())/(group[1]["value"].max()- group[1]["value"].min()), label=f'pid={group[0]}', marker='d')
+        ax.set_xlim([monthly['ym'].min(), monthly['ym'].max()])
+        ax.legend()
+        ax.grid()
+        
+
+fig_sns = plt.figure(figsize=(8,6))
+corr_mat= pd.pivot_table(df_hm_plot, index='ym', columns='item_id', values='value', fill_value=0).corr()
+sns.heatmap(corr_mat, annot=True, fmt=".2f",vmin=-1, vmax=1, cbar_kws={'ticks': [-1, -0.5, 0, 0.5, 1]}, center=0)
+top5_hs4=8102, 3개 아이템, ['FQCLOEXA' 'KEUWZRKO' 'UIFPPCLR']
+index = 25, 1th item, item name: FQCLOEXA
+index = 41, 2th item, item name: KEUWZRKO
+index = 80, 3th item, item name: UIFPPCLR
+<Axes: xlabel='item_id', ylabel='item_id'>
+
+
+
+sel_topN_hs4 = 6
+print(f'top{sel_topN_hs4}_hs4={topN_hs4[sel_topN_hs4-1]}, {len(dct_hs4_tmp_df[topN_hs4[sel_topN_hs4-1]])}개 아이템, {dct_hs4_tmp_df[topN_hs4[sel_topN_hs4-1]]}') # top1_hs4 : ['BSRMSVTC' 'DJBLNPNC' 'RCBZUSIM' 'SUOYXCHP' 'WQMVCOEM' 'ZKENOUDA']
+
+j= 0
+for i, group in enumerate(monthly.groupby("item_id")[['item_id','ym', 'value']]):
+    if group[0] in dct_hs4_tmp_df[topN_hs4[sel_topN_hs4-1]]:
+        j += 1
+        print(f'index = {i+1}, {j}th item, item name: {group[0]}')
+
+        fig = plt.figure(figsize=(12,4))
+
+        ax = plt.gca()
+        ax.plot(group[1]["ym"], group[1]["value"], label=f'pid={group[0]}', marker='d')
+        ax.set_xlim([monthly['ym'].min(), monthly['ym'].max()])
+        ax.legend()
+        ax.grid()
+top6_hs4=8505, 3개 아이템, ['GYHKIVQT' 'ROACSLMG' 'VBYCLTYZ']
+index = 32, 1th item, item name: GYHKIVQT
+index = 69, 2th item, item name: ROACSLMG
+index = 83, 3th item, item name: VBYCLTYZ
+
+
+
+
+sel_topN_hs4 = 6
+print(f'top{sel_topN_hs4}_hs4={topN_hs4[sel_topN_hs4-1]}, {len(dct_hs4_tmp_df[topN_hs4[sel_topN_hs4-1]])}개 아이템, {dct_hs4_tmp_df[topN_hs4[sel_topN_hs4-1]]}') # top1_hs4 : ['BSRMSVTC' 'DJBLNPNC' 'RCBZUSIM' 'SUOYXCHP' 'WQMVCOEM' 'ZKENOUDA']
+
+df_hm_plot = pd.DataFrame()
+j= 0
+fig = plt.figure(figsize=(12,4))
+for i, group in enumerate(monthly.groupby("item_id")[['item_id','ym', 'value']]):
+    if group[0] in dct_hs4_tmp_df[topN_hs4[sel_topN_hs4-1]]:
+        j += 1
+        print(f'index = {i+1}, {j}th item, item name: {group[0]}')
+
+        df_hm_plot = pd.concat([df_hm_plot, group[1]], axis=0)
+
+        ax = plt.gca()
+        ax.plot(group[1]["ym"], (group[1]["value"]- group[1]["value"].min())/(group[1]["value"].max()- group[1]["value"].min()), label=f'pid={group[0]}', marker='d')
+        ax.set_xlim([monthly['ym'].min(), monthly['ym'].max()])
+        ax.legend()
+        ax.grid()
+            
+fig_sns = plt.figure(figsize=(8,6))
+corr_mat= pd.pivot_table(df_hm_plot, index='ym', columns='item_id', values='value', fill_value=0).corr()
+sns.heatmap(corr_mat, annot=True, fmt=".2f",vmin=-1, vmax=1, cbar_kws={'ticks': [-1, -0.5, 0, 0.5, 1]}, center=0)
+top6_hs4=8505, 3개 아이템, ['GYHKIVQT' 'ROACSLMG' 'VBYCLTYZ']
+index = 32, 1th item, item name: GYHKIVQT
+index = 69, 2th item, item name: ROACSLMG
+index = 83, 3th item, item name: VBYCLTYZ
+<Axes: xlabel='item_id', ylabel='item_id'>
+
+
+
+sel_topN_hs4 = 7
+print(f'top{sel_topN_hs4}_hs4={topN_hs4[sel_topN_hs4-1]}, {len(dct_hs4_tmp_df[topN_hs4[sel_topN_hs4-1]])}개 아이템, {dct_hs4_tmp_df[topN_hs4[sel_topN_hs4-1]]}') # top1_hs4 : ['BSRMSVTC' 'DJBLNPNC' 'RCBZUSIM' 'SUOYXCHP' 'WQMVCOEM' 'ZKENOUDA']
+
+df_hm_plot = pd.DataFrame()
+j= 0
+fig = plt.figure(figsize=(12,4))
+for i, group in enumerate(monthly.groupby("item_id")[['item_id','ym', 'value']]):
+    if group[0] in dct_hs4_tmp_df[topN_hs4[sel_topN_hs4-1]]:
+        j += 1
+        print(f'index = {i+1}, {j}th item, item name: {group[0]}')
+
+        df_hm_plot = pd.concat([df_hm_plot, group[1]], axis=0)
+
+        ax = plt.gca()
+        ax.plot(group[1]["ym"], (group[1]["value"]- group[1]["value"].min())/(group[1]["value"].max()- group[1]["value"].min()), label=f'pid={group[0]}', marker='d')
+        ax.set_xlim([monthly['ym'].min(), monthly['ym'].max()])
+        ax.legend()
+        ax.grid()
+        
+fig_sns = plt.figure(figsize=(8,6))
+corr_mat= pd.pivot_table(df_hm_plot, index='ym', columns='item_id', values='value', fill_value=0).corr()
+sns.heatmap(corr_mat, annot=True, fmt=".2f",vmin=-1, vmax=1, cbar_kws={'ticks': [-1, -0.5, 0, 0.5, 1]}, center=0)
+top7_hs4=3815, 3개 아이템, ['OJIFIHMZ' 'STZDBITS' 'XIIEJNEE']
+index = 55, 1th item, item name: OJIFIHMZ
+index = 75, 2th item, item name: STZDBITS
+index = 92, 3th item, item name: XIIEJNEE
+<Axes: xlabel='item_id', ylabel='item_id'>
+
+
+
+sel_topN_hs4 = 8
+print(f'top{sel_topN_hs4}_hs4={topN_hs4[sel_topN_hs4-1]}, {len(dct_hs4_tmp_df[topN_hs4[sel_topN_hs4-1]])}개 아이템, {dct_hs4_tmp_df[topN_hs4[sel_topN_hs4-1]]}') # top1_hs4 : ['BSRMSVTC' 'DJBLNPNC' 'RCBZUSIM' 'SUOYXCHP' 'WQMVCOEM' 'ZKENOUDA']
+
+df_hm_plot = pd.DataFrame()
+j= 0
+fig = plt.figure(figsize=(12,4))
+for i, group in enumerate(monthly.groupby("item_id")[['item_id','ym', 'value']]):
+    if group[0] in dct_hs4_tmp_df[topN_hs4[sel_topN_hs4-1]]:
+        j += 1
+        print(f'index = {i+1}, {j}th item, item name: {group[0]}')
+
+        df_hm_plot = pd.concat([df_hm_plot, group[1]], axis=0)
+
+        ax = plt.gca()
+        ax.plot(group[1]["ym"], (group[1]["value"]- group[1]["value"].min())/(group[1]["value"].max()- group[1]["value"].min()), label=f'pid={group[0]}', marker='d')
+        ax.set_xlim([monthly['ym'].min(), monthly['ym'].max()])
+        ax.legend()
+        ax.grid()
+        
+fig_sns = plt.figure(figsize=(8,6))
+corr_mat= pd.pivot_table(df_hm_plot, index='ym', columns='item_id', values='value', fill_value=0).corr()
+sns.heatmap(corr_mat, annot=True, fmt=".2f",vmin=-1, vmax=1, cbar_kws={'ticks': [-1, -0.5, 0, 0.5, 1]}, center=0)
+top8_hs4=2807, 3개 아이템, ['DDEXPPXU' 'LLHREMKS' 'YSYHGLQK']
+index = 15, 1th item, item name: DDEXPPXU
+index = 44, 2th item, item name: LLHREMKS
+index = 96, 3th item, item name: YSYHGLQK
+<Axes: xlabel='item_id', ylabel='item_id'>
+
+
+
+sel_topN_hs4 = 9
+print(f'top{sel_topN_hs4}_hs4={topN_hs4[sel_topN_hs4-1]}, {len(dct_hs4_tmp_df[topN_hs4[sel_topN_hs4-1]])}개 아이템, {dct_hs4_tmp_df[topN_hs4[sel_topN_hs4-1]]}') # top1_hs4 : ['BSRMSVTC' 'DJBLNPNC' 'RCBZUSIM' 'SUOYXCHP' 'WQMVCOEM' 'ZKENOUDA']
+
+df_hm_plot = pd.DataFrame()
+j= 0
+fig = plt.figure(figsize=(12,4))
+for i, group in enumerate(monthly.groupby("item_id")[['item_id','ym', 'value']]):
+    if group[0] in dct_hs4_tmp_df[topN_hs4[sel_topN_hs4-1]]:
+        j += 1
+        print(f'index = {i+1}, {j}th item, item name: {group[0]}')
+
+        df_hm_plot = pd.concat([df_hm_plot, group[1]], axis=0)
+
+        ax = plt.gca()
+        ax.plot(group[1]["ym"], (group[1]["value"]- group[1]["value"].min())/(group[1]["value"].max()- group[1]["value"].min()), label=f'pid={group[0]}', marker='d')
+        ax.set_xlim([monthly['ym'].min(), monthly['ym'].max()])
+        ax.legend()
+        ax.grid()
+        
+fig_sns = plt.figure(figsize=(8,6))
+corr_mat= pd.pivot_table(df_hm_plot, index='ym', columns='item_id', values='value', fill_value=0).corr()
+sns.heatmap(corr_mat, annot=True, fmt=".2f",vmin=-1, vmax=1, cbar_kws={'ticks': [-1, -0.5, 0, 0.5, 1]}, center=0)
+top9_hs4=7207, 2개 아이템, ['SDWAYPIK' 'TGOELCAG']
+index = 73, 1th item, item name: SDWAYPIK
+index = 78, 2th item, item name: TGOELCAG
+<Axes: xlabel='item_id', ylabel='item_id'>
+
+
+
+sel_topN_hs4 = 10
+print(f'top{sel_topN_hs4}_hs4={topN_hs4[sel_topN_hs4-1]}, {len(dct_hs4_tmp_df[topN_hs4[sel_topN_hs4-1]])}개 아이템, {dct_hs4_tmp_df[topN_hs4[sel_topN_hs4-1]]}') # top1_hs4 : ['BSRMSVTC' 'DJBLNPNC' 'RCBZUSIM' 'SUOYXCHP' 'WQMVCOEM' 'ZKENOUDA']
+
+df_hm_plot = pd.DataFrame()
+j= 0
+fig = plt.figure(figsize=(12,4))
+for i, group in enumerate(monthly.groupby("item_id")[['item_id','ym', 'value']]):
+    if group[0] in dct_hs4_tmp_df[topN_hs4[sel_topN_hs4-1]]:
+        j += 1
+        print(f'index = {i+1}, {j}th item, item name: {group[0]}')
+
+        df_hm_plot = pd.concat([df_hm_plot, group[1]], axis=0)
+
+        ax = plt.gca()
+        ax.plot(group[1]["ym"], (group[1]["value"]- group[1]["value"].min())/(group[1]["value"].max()- group[1]["value"].min()), label=f'pid={group[0]}', marker='d')
+        ax.set_xlim([monthly['ym'].min(), monthly['ym'].max()])
+        ax.legend()
+        ax.grid()
+    
+
+fig_sns = plt.figure(figsize=(8,6))
+corr_mat= pd.pivot_table(df_hm_plot, index='ym', columns='item_id', values='value', fill_value=0).corr()
+sns.heatmap(corr_mat, annot=True, fmt=".2f",vmin=-1, vmax=1, cbar_kws={'ticks': [-1, -0.5, 0, 0.5, 1]}, center=0)
+top10_hs4=2846, 2개 아이템, ['FRHNWLNI' 'MBSBZBXA']
+index = 26, 1th item, item name: FRHNWLNI
+index = 50, 2th item, item name: MBSBZBXA
+<Axes: xlabel='item_id', ylabel='item_id'>
+
+
+
+sel_topN_hs4 = 11
+print(f'top{sel_topN_hs4}_hs4={topN_hs4[sel_topN_hs4-1]}, {len(dct_hs4_tmp_df[topN_hs4[sel_topN_hs4-1]])}개 아이템, {dct_hs4_tmp_df[topN_hs4[sel_topN_hs4-1]]}') # top1_hs4 : ['BSRMSVTC' 'DJBLNPNC' 'RCBZUSIM' 'SUOYXCHP' 'WQMVCOEM' 'ZKENOUDA']
+
+df_hm_plot = pd.DataFrame()
+j= 0
+fig = plt.figure(figsize=(12,4))
+for i, group in enumerate(monthly.groupby("item_id")[['item_id','ym', 'value']]):
+    if group[0] in dct_hs4_tmp_df[topN_hs4[sel_topN_hs4-1]]:
+        j += 1
+        print(f'index = {i+1}, {j}th item, item name: {group[0]}')
+
+        df_hm_plot = pd.concat([df_hm_plot, group[1]], axis=0)
+
+        ax = plt.gca()
+        ax.plot(group[1]["ym"], (group[1]["value"]- group[1]["value"].min())/(group[1]["value"].max()- group[1]["value"].min()), label=f'pid={group[0]}', marker='d')
+        ax.set_xlim([monthly['ym'].min(), monthly['ym'].max()])
+        ax.legend()
+        ax.grid()
+        
+
+fig_sns = plt.figure(figsize=(8,6))
+corr_mat= pd.pivot_table(df_hm_plot, index='ym', columns='item_id', values='value', fill_value=0).corr()
+sns.heatmap(corr_mat, annot=True, fmt=".2f",vmin=-1, vmax=1, cbar_kws={'ticks': [-1, -0.5, 0, 0.5, 1]}, center=0)
+top11_hs4=3102, 2개 아이템, ['BTMOEMEP' 'LRVGFDFM']
+index = 11, 1th item, item name: BTMOEMEP
+index = 46, 2th item, item name: LRVGFDFM
+<Axes: xlabel='item_id', ylabel='item_id'>
+
+
+
+sel_topN_hs4 = 12
+print(f'top{sel_topN_hs4}_hs4={topN_hs4[sel_topN_hs4-1]}, {len(dct_hs4_tmp_df[topN_hs4[sel_topN_hs4-1]])}개 아이템, {dct_hs4_tmp_df[topN_hs4[sel_topN_hs4-1]]}') # top1_hs4 : ['BSRMSVTC' 'DJBLNPNC' 'RCBZUSIM' 'SUOYXCHP' 'WQMVCOEM' 'ZKENOUDA']
+
+df_hm_plot = pd.DataFrame()
+j= 0
+fig = plt.figure(figsize=(12,4))
+for i, group in enumerate(monthly.groupby("item_id")[['item_id','ym', 'value']]):
+    if group[0] in dct_hs4_tmp_df[topN_hs4[sel_topN_hs4-1]]:
+        j += 1
+        print(f'index = {i+1}, {j}th item, item name: {group[0]}')
+
+        df_hm_plot = pd.concat([df_hm_plot, group[1]], axis=0)
+
+        ax = plt.gca()
+        ax.plot(group[1]["ym"], (group[1]["value"]- group[1]["value"].min())/(group[1]["value"].max()- group[1]["value"].min()), label=f'pid={group[0]}', marker='d')
+        ax.set_xlim([monthly['ym'].min(), monthly['ym'].max()])
+        ax.legend()
+        ax.grid()
+        
+
+fig_sns = plt.figure(figsize=(8,6))
+corr_mat= pd.pivot_table(df_hm_plot, index='ym', columns='item_id', values='value', fill_value=0).corr()
+sns.heatmap(corr_mat, annot=True, fmt=".2f",vmin=-1, vmax=1, cbar_kws={'ticks': [-1, -0.5, 0, 0.5, 1]}, center=0)
+top12_hs4=2529, 2개 아이템, ['FTSVTTSR' 'XMKRPGLB']
+index = 27, 1th item, item name: FTSVTTSR
+index = 94, 2th item, item name: XMKRPGLB
+<Axes: xlabel='item_id', ylabel='item_id'>
+
+
+
+sel_topN_hs4 = 13
+print(f'top{sel_topN_hs4}_hs4={topN_hs4[sel_topN_hs4-1]}, {len(dct_hs4_tmp_df[topN_hs4[sel_topN_hs4-1]])}개 아이템, {dct_hs4_tmp_df[topN_hs4[sel_topN_hs4-1]]}') # top1_hs4 : ['BSRMSVTC' 'DJBLNPNC' 'RCBZUSIM' 'SUOYXCHP' 'WQMVCOEM' 'ZKENOUDA']
+
+df_hm_plot = pd.DataFrame()
+j= 0
+fig = plt.figure(figsize=(12,4))
+for i, group in enumerate(monthly.groupby("item_id")[['item_id','ym', 'value']]):
+    if group[0] in dct_hs4_tmp_df[topN_hs4[sel_topN_hs4-1]]:
+        j += 1
+        print(f'index = {i+1}, {j}th item, item name: {group[0]}')
+
+        df_hm_plot = pd.concat([df_hm_plot, group[1]], axis=0)
+
+        ax = plt.gca()
+        ax.plot(group[1]["ym"], (group[1]["value"]- group[1]["value"].min())/(group[1]["value"].max()- group[1]["value"].min()), label=f'pid={group[0]}', marker='d')
+        ax.set_xlim([monthly['ym'].min(), monthly['ym'].max()])
+        ax.legend()
+        ax.grid()
+        
+
+fig_sns = plt.figure(figsize=(8,6))
+corr_mat= pd.pivot_table(df_hm_plot, index='ym', columns='item_id', values='value', fill_value=0).corr()
+sns.heatmap(corr_mat, annot=True, fmt=".2f",vmin=-1, vmax=1, cbar_kws={'ticks': [-1, -0.5, 0, 0.5, 1]}, center=0)
+top13_hs4=8714, 2개 아이템, ['FITUEHWN' 'UGEQLMXM']
+index = 24, 1th item, item name: FITUEHWN
+index = 79, 2th item, item name: UGEQLMXM
+<Axes: xlabel='item_id', ylabel='item_id'>
+
+
+
+sel_topN_hs4 = 14
+print(f'top{sel_topN_hs4}_hs4={topN_hs4[sel_topN_hs4-1]}, {len(dct_hs4_tmp_df[topN_hs4[sel_topN_hs4-1]])}개 아이템, {dct_hs4_tmp_df[topN_hs4[sel_topN_hs4-1]]}') # top1_hs4 : ['BSRMSVTC' 'DJBLNPNC' 'RCBZUSIM' 'SUOYXCHP' 'WQMVCOEM' 'ZKENOUDA']
+
+j= 0
+for i, group in enumerate(monthly.groupby("item_id")[['item_id','ym', 'value']]):
+    if group[0] in dct_hs4_tmp_df[topN_hs4[sel_topN_hs4-1]]:
+        j += 1
+        print(f'index = {i+1}, {j}th item, item name: {group[0]}')
+
+        fig = plt.figure(figsize=(12,4))
+
+        ax = plt.gca()
+        ax.plot(group[1]["ym"], group[1]["value"], label=f'pid={group[0]}', marker='d')
+        ax.set_xlim([monthly['ym'].min(), monthly['ym'].max()])
+        ax.legend()
+        ax.grid()
+top14_hs4=1210, 1개 아이템, ['JBVHSUWY']
+index = 36, 1th item, item name: JBVHSUWY
+
+
+###########
+###########
+########### seq 값에 따른 item들의  범주화  
+###########
+###########
+
+train.groupby("seq")['item_id'].apply(lambda x: len(set(x)))
+seq
+1.0     99
+2.0    100
+3.0    100
+Name: item_id, dtype: int64
+
+train[train['item_id']=='AANGBULD'].head(20)
+item_id	year	month	seq	type	hs4	weight	quantity	value
+122	AANGBULD	2022	1	2.0	1	4810	17625.0	0.0	14276.0
+204	AANGBULD	2022	1	3.0	1	4810	0.0	0.0	0.0
+456	AANGBULD	2022	2	3.0	1	4810	67983.0	0.0	52347.0
+617	AANGBULD	2022	3	2.0	1	4810	69544.0	0.0	53549.0
+705	AANGBULD	2022	3	3.0	1	4810	0.0	0.0	0.0
+1120	AANGBULD	2022	5	2.0	1	4810	34173.0	0.0	26997.0
+1212	AANGBULD	2022	5	3.0	1	4810	0.0	0.0	0.0
+1294	AANGBULD	2022	6	1.0	1	4810	51859.0	0.0	42007.0
+1375	AANGBULD	2022	6	2.0	1	4810	51807.0	0.0	42482.0
+1463	AANGBULD	2022	6	3.0	1	4810	0.0	0.0	0.0
+2707	AANGBULD	2022	11	3.0	1	4810	67.0	0.0	299.0
+2960	AANGBULD	2022	12	3.0	1	4810	66.0	0.0	574.0
+3299	AANGBULD	2023	2	1.0	1	4810	34184.0	0.0	28112.0
+3384	AANGBULD	2023	2	2.0	1	4810	16097.0	0.0	13241.0
+3472	AANGBULD	2023	2	3.0	1	4810	0.0	0.0	0.0
+4127	AANGBULD	2023	5	2.0	1	4810	32345.0	0.0	26524.0
+4214	AANGBULD	2023	5	3.0	1	4810	0.0	0.0	0.0
+4376	AANGBULD	2023	6	2.0	1	4810	70.0	0.0	340.0
+4465	AANGBULD	2023	6	3.0	1	4810	0.0	0.0	0.0
+4966	AANGBULD	2023	8	3.0	1	4810	51427.0	0.0	41142.0
+
+train[train["seq"] == 1.0]['item_id'].unique().shape, train[train["seq"] == 2.0]['item_id'].unique().shape, train[train["seq"] == 3.0]['item_id'].unique().shape
+((99,), (100,), (100,))
+
+train[train["seq"] == 1.0]['year'].unique().shape, train[train["seq"] == 2.0]['year'].unique().shape, train[train["seq"] == 3.0]['year'].unique().shape
+((4,), (4,), (4,))
+
+train[train["seq"] == 1.0]['month'].unique().shape, train[train["seq"] == 2.0]['month'].unique().shape, train[train["seq"] == 3.0]['month'].unique().shape
+((12,), (12,), (12,))
+
+train[train["seq"] == 1.0][['item_id','year', 'month']].groupby(['item_id', 'year']).size()
+item_id   year
+AANGBULD  2022     1
+          2023     1
+          2024     4
+AHMDUILJ  2022    12
+          2023    12
+                  ..
+ZKENOUDA  2025     7
+ZXERAXWP  2022    12
+          2023    12
+          2024    12
+          2025     7
+Length: 373, dtype: int64
+
+train[train["seq"] == 1.0][['item_id','year', 'month']].groupby(['item_id', 'month']).size()
+item_id   month
+AANGBULD  2        1
+          3        1
+          6        1
+          7        1
+          8        1
+                  ..
+ZXERAXWP  8        3
+          9        3
+          10       3
+          11       3
+          12       3
+Length: 1074, dtype: int64
+
+pd.pivot_table(train, index='item_id', columns="year", values='seq',aggfunc='sum')
+year	2022	2023	2024	2025
+item_id				
+AANGBULD	30.0	29.0	57.0	19.0
+AHMDUILJ	72.0	72.0	72.0	42.0
+ANWUJOKX	25.0	9.0	NaN	6.0
+APQGTRMF	69.0	67.0	62.0	41.0
+ATLDMDBO	69.0	72.0	71.0	42.0
+...	...	...	...	...
+YSYHGLQK	56.0	62.0	62.0	30.0
+ZCELVYQU	62.0	65.0	53.0	40.0
+ZGJXVMNI	72.0	72.0	72.0	42.0
+ZKENOUDA	71.0	71.0	71.0	42.0
+ZXERAXWP	72.0	72.0	72.0	42.0
+100 rows × 4 columns
+
+
+seq_pivot_df_cnt = pd.pivot_table(train, index='item_id', columns="month", values='seq',aggfunc='count', margins=True, margins_name="seq_total")
+seq_pivot_df_cnt
+month	1	2	3	4	5	6	7	8	9	10	11	12	seq_total
+item_id													
+AANGBULD	5.0	8.0	5.0	3.0	4.0	7.0	5.0	4.0	3.0	4.0	3.0	5.0	56
+AHMDUILJ	12.0	12.0	12.0	12.0	12.0	12.0	12.0	9.0	9.0	9.0	9.0	9.0	129
+ANWUJOKX	3.0	NaN	NaN	3.0	3.0	1.0	2.0	1.0	NaN	2.0	NaN	3.0	18
+APQGTRMF	12.0	11.0	10.0	11.0	12.0	11.0	12.0	7.0	9.0	7.0	8.0	5.0	115
+ATLDMDBO	12.0	12.0	11.0	12.0	12.0	11.0	11.0	9.0	9.0	9.0	8.0	9.0	125
+...	...	...	...	...	...	...	...	...	...	...	...	...	...
+ZCELVYQU	10.0	10.0	9.0	12.0	10.0	11.0	11.0	3.0	7.0	6.0	7.0	9.0	105
+ZGJXVMNI	12.0	12.0	12.0	12.0	12.0	12.0	12.0	9.0	9.0	9.0	9.0	9.0	129
+ZKENOUDA	11.0	12.0	12.0	12.0	12.0	12.0	12.0	9.0	9.0	8.0	9.0	8.0	126
+ZXERAXWP	12.0	12.0	12.0	12.0	12.0	12.0	12.0	9.0	9.0	9.0	9.0	9.0	129
+seq_total	991.0	1022.0	997.0	1008.0	1004.0	1000.0	1033.0	743.0	757.0	743.0	761.0	777.0	10836
+101 rows × 13 columns
+
+
+count, bins, container = plt.hist(seq_pivot_df_cnt['seq_total'].iloc[:-1], bins=20, edgecolor='k', rwidth=.9) # 
+print('count :', count) 
+print('bins :', bins)   
+print('container :', container) 
+
+
+for i in range(8):
+    print(f'{bins[i]} ~ {bins[i+1]} : {int(count[i])}개')
+
+plt.xlabel('Scores')
+plt.ylabel('Count')
+
+plt.title("seq_total(동일 연/월 일련번호 seq 의 총합)")
+plt.show()
+count : [ 4.  1.  4.  0.  0.  0.  0.  1.  2.  3.  3.  1.  0.  1.  3.  1.  2.  5.
+  4. 65.]
+bins : [  2.     8.35  14.7   21.05  27.4   33.75  40.1   46.45  52.8   59.15
+  65.5   71.85  78.2   84.55  90.9   97.25 103.6  109.95 116.3  122.65
+ 129.  ]
+container : <BarContainer object of 20 artists>
+2.0 ~ 8.35 : 4개
+8.35 ~ 14.7 : 1개
+14.7 ~ 21.049999999999997 : 4개
+21.049999999999997 ~ 27.4 : 0개
+27.4 ~ 33.75 : 0개
+33.75 ~ 40.099999999999994 : 0개
+40.099999999999994 ~ 46.449999999999996 : 0개
+46.449999999999996 ~ 52.8 : 1개
+
+
+####
+####  ==> 따라서 40, 80을 기준으로 3 범주로 나눈다 ==> seq_cnt_low,  seq_cnt_mid,  seq_cnt_high
+####
+
+tmp_ser = seq_pivot_df_cnt['seq_total'].iloc[:-1]
+dct_seq_total = pd.cut(tmp_ser, bins= [0, 40, 80, tmp_ser.max()], labels = ['seq_cnt_low',  'seq_cnt_mid',  'seq_cnt_high'] ).to_dict()
+dct_seq_total
+{'AANGBULD': 'seq_cnt_mid',
+ 'AHMDUILJ': 'seq_cnt_high',
+ 'ANWUJOKX': 'seq_cnt_low',
+ 'APQGTRMF': 'seq_cnt_high',
+ 'ATLDMDBO': 'seq_cnt_high',
+ 'AXULOHBQ': 'seq_cnt_high',
+ 'BEZYMBBT': 'seq_cnt_high',
+ 'BJALXPFS': 'seq_cnt_high',
+ 'BLANHGYY': 'seq_cnt_mid',
+ 'BSRMSVTC': 'seq_cnt_high',
+ 'BTMOEMEP': 'seq_cnt_high',
+ 'BUZIIBYG': 'seq_cnt_high',
+ 'CCLHWFWF': 'seq_cnt_high',
+ 'DBWLZWNK': 'seq_cnt_high',
+ 'DDEXPPXU': 'seq_cnt_high',
+ 'DEWLVASR': 'seq_cnt_high',
+ 'DJBLNPNC': 'seq_cnt_mid',
+ 'DNMPSKTB': 'seq_cnt_high',
+ 'DUCMGGNW': 'seq_cnt_high',
+ 'ELQGMQWE': 'seq_cnt_high',
+ 'EVBVXETX': 'seq_cnt_high',
+ 'FCYBOAXC': 'seq_cnt_high',
+ 'FDXPMYGF': 'seq_cnt_high',
+ 'FITUEHWN': 'seq_cnt_high',
+ 'FQCLOEXA': 'seq_cnt_high',
+ 'FRHNWLNI': 'seq_cnt_high',
+ 'FTSVTTSR': 'seq_cnt_high',
+ 'FWUCPMMW': 'seq_cnt_mid',
+ 'GIKPEWTY': 'seq_cnt_low',
+ 'GKQIJYDH': 'seq_cnt_high',
+ 'GMBFCMIU': 'seq_cnt_low',
+ 'GYHKIVQT': 'seq_cnt_high',
+ 'HCDTGMST': 'seq_cnt_high',
+ 'HXYSSRXE': 'seq_cnt_high',
+ 'IGDVVKUD': 'seq_cnt_high',
+ 'JBVHSUWY': 'seq_cnt_high',
+ 'JERHKLYW': 'seq_cnt_high',
+ 'JPBRUTWP': 'seq_cnt_high',
+ 'JSLXRQOK': 'seq_cnt_high',
+ 'KAGJCHMR': 'seq_cnt_high',
+ 'KEUWZRKO': 'seq_cnt_high',
+ 'KFQSHBNH': 'seq_cnt_low',
+ 'KJNSOAHR': 'seq_cnt_high',
+ 'LLHREMKS': 'seq_cnt_high',
+ 'LPHPPJUG': 'seq_cnt_high',
+ 'LRVGFDFM': 'seq_cnt_high',
+ 'LSOIUSXD': 'seq_cnt_high',
+ 'LTOYKIML': 'seq_cnt_high',
+ 'LUENUFGA': 'seq_cnt_high',
+ 'MBSBZBXA': 'seq_cnt_high',
+ 'MIRCVAMV': 'seq_cnt_mid',
+ 'NAQIHUKZ': 'seq_cnt_mid',
+ 'NZKBIBNU': 'seq_cnt_high',
+ 'OGAFEHLU': 'seq_cnt_mid',
+ 'OJIFIHMZ': 'seq_cnt_high',
+ 'OKMBFVKS': 'seq_cnt_high',
+ 'OXKURKXR': 'seq_cnt_high',
+ 'PLMZALFA': 'seq_cnt_low',
+ 'PYZMVUWD': 'seq_cnt_mid',
+ 'QJQJSWFU': 'seq_cnt_high',
+ 'QKXNTIIB': 'seq_cnt_high',
+ 'QRKRBYJL': 'seq_cnt_high',
+ 'QSDCUCLB': 'seq_cnt_low',
+ 'QVLMOEYE': 'seq_cnt_high',
+ 'RAWUKQMJ': 'seq_cnt_high',
+ 'RCBZUSIM': 'seq_cnt_high',
+ 'RJCAXSGH': 'seq_cnt_low',
+ 'RJGPVEXX': 'seq_cnt_high',
+ 'ROACSLMG': 'seq_cnt_high',
+ 'RUVXNNVA': 'seq_cnt_low',
+ 'SAAYMURU': 'seq_cnt_high',
+ 'SAHWCZNH': 'seq_cnt_high',
+ 'SDWAYPIK': 'seq_cnt_high',
+ 'SNHYOVBM': 'seq_cnt_high',
+ 'STZDBITS': 'seq_cnt_high',
+ 'SUOYXCHP': 'seq_cnt_high',
+ 'TANNMIMB': 'seq_cnt_low',
+ 'TGOELCAG': 'seq_cnt_mid',
+ 'UGEQLMXM': 'seq_cnt_high',
+ 'UIFPPCLR': 'seq_cnt_high',
+ 'UQYUIVVR': 'seq_cnt_high',
+ 'UXSPKBJR': 'seq_cnt_high',
+ 'VBYCLTYZ': 'seq_cnt_high',
+ 'VMAQSTJE': 'seq_cnt_high',
+ 'VUAFAIYJ': 'seq_cnt_high',
+ 'VWMBASNE': 'seq_cnt_high',
+ 'WBLJNPZQ': 'seq_cnt_high',
+ 'WHPUAOID': 'seq_cnt_high',
+ 'WPQXWHYO': 'seq_cnt_high',
+ 'WQMVCOEM': 'seq_cnt_high',
+ 'XIFHSOWQ': 'seq_cnt_high',
+ 'XIIEJNEE': 'seq_cnt_mid',
+ 'XIPPENFQ': 'seq_cnt_high',
+ 'XMKRPGLB': 'seq_cnt_high',
+ 'XUOIQPFL': 'seq_cnt_high',
+ 'YSYHGLQK': 'seq_cnt_high',
+ 'ZCELVYQU': 'seq_cnt_high',
+ 'ZGJXVMNI': 'seq_cnt_high',
+ 'ZKENOUDA': 'seq_cnt_high',
+ 'ZXERAXWP': 'seq_cnt_high'}
+
+train_fe = train.copy()
+train_fe['seq_cat'] = train_fe["item_id"].map(dct_seq_total)
+train_fe
+item_id	year	month	seq	type	hs4	weight	quantity	value	seq_cat
+0	DEWLVASR	2022	1	1.0	1	3038	14858.0	0.0	32688.0	seq_cnt_high
+1	ELQGMQWE	2022	1	1.0	1	2002	62195.0	0.0	110617.0	seq_cnt_high
+2	AHMDUILJ	2022	1	1.0	1	2102	18426.0	0.0	72766.0	seq_cnt_high
+3	XIPPENFQ	2022	1	1.0	1	2501	20426.0	0.0	11172.0	seq_cnt_high
+4	FTSVTTSR	2022	1	1.0	1	2529	248000.0	0.0	143004.0	seq_cnt_high
+...	...	...	...	...	...	...	...	...	...	...
+10831	XIFHSOWQ	2025	7	3.0	1	8708	352.0	0.0	12937.0	seq_cnt_high
+10832	FITUEHWN	2025	7	3.0	1	8714	655.0	900.0	16054.0	seq_cnt_high
+10833	UGEQLMXM	2025	7	3.0	1	8714	758.0	0.0	74377.0	seq_cnt_high
+10834	BLANHGYY	2025	7	3.0	1	9022	345.0	2.0	69720.0	seq_cnt_mid
+10835	BUZIIBYG	2025	7	3.0	1	9403	2415019.0	0.0	6359276.0	seq_cnt_high
+10836 rows × 10 columns
+
+
+monthly_fe = monthly.copy()
+monthly_fe["seq_cat"] = monthly_fe['item_id'].map(dct_seq_total)
+monthly_fe
+item_id	year	month	value	ym	seq_cat
+0	AANGBULD	2022	1	14276.0	2022-01-01	seq_cnt_mid
+1	AANGBULD	2022	2	52347.0	2022-02-01	seq_cnt_mid
+2	AANGBULD	2022	3	53549.0	2022-03-01	seq_cnt_mid
+3	AANGBULD	2022	5	26997.0	2022-05-01	seq_cnt_mid
+4	AANGBULD	2022	6	84489.0	2022-06-01	seq_cnt_mid
+...	...	...	...	...	...	...
+3771	ZXERAXWP	2025	3	12817.0	2025-03-01	seq_cnt_high
+3772	ZXERAXWP	2025	4	12482.0	2025-04-01	seq_cnt_high
+3773	ZXERAXWP	2025	5	18224.0	2025-05-01	seq_cnt_high
+3774	ZXERAXWP	2025	6	42690.0	2025-06-01	seq_cnt_high
+3775	ZXERAXWP	2025	7	20678.0	2025-07-01	seq_cnt_high
+3776 rows × 6 columns
+
+
+train_fe.groupby(["seq_cat"], as_index=False)["item_id"].apply(lambda x: np.unique(x))
+seq_cat	item_id
+0	seq_cnt_high	[AHMDUILJ, APQGTRMF, ATLDMDBO, AXULOHBQ, BEZYM...
+1	seq_cnt_low	[ANWUJOKX, GIKPEWTY, GMBFCMIU, KFQSHBNH, PLMZA...
+2	seq_cnt_mid	[AANGBULD, BLANHGYY, DJBLNPNC, FWUCPMMW, MIRCV...
+
+tmp_df_seq = train_fe.groupby(["seq_cat"], as_index=False)["item_id"].apply(lambda x: np.unique(x))
+tmp_df_seq['seq_cat_len'] = train_fe.groupby(["seq_cat"])["item_id"].apply(lambda x: len(np.unique(x))).values#['item_id']#.sort_values(by='item_id', ascending=False, key = lambda x: len(x), axis=1)#.reset_index(drop=True)['item_id']
+tmp_df_seq
+seq_cat	item_id	seq_cat_len
+0	seq_cnt_high	[AHMDUILJ, APQGTRMF, ATLDMDBO, AXULOHBQ, BEZYM...	81
+1	seq_cnt_low	[ANWUJOKX, GIKPEWTY, GMBFCMIU, KFQSHBNH, PLMZA...	9
+2	seq_cnt_mid	[AANGBULD, BLANHGYY, DJBLNPNC, FWUCPMMW, MIRCV...	10
+
+dct_seq_cat = tmp_df_seq[['seq_cat','item_id']].set_index('seq_cat').to_dict()['item_id']
+dct_seq_cat
+{'seq_cnt_high': array(['AHMDUILJ', 'APQGTRMF', 'ATLDMDBO', 'AXULOHBQ', 'BEZYMBBT',
+        'BJALXPFS', 'BSRMSVTC', 'BTMOEMEP', 'BUZIIBYG', 'CCLHWFWF',
+        'DBWLZWNK', 'DDEXPPXU', 'DEWLVASR', 'DNMPSKTB', 'DUCMGGNW',
+        'ELQGMQWE', 'EVBVXETX', 'FCYBOAXC', 'FDXPMYGF', 'FITUEHWN',
+        'FQCLOEXA', 'FRHNWLNI', 'FTSVTTSR', 'GKQIJYDH', 'GYHKIVQT',
+        'HCDTGMST', 'HXYSSRXE', 'IGDVVKUD', 'JBVHSUWY', 'JERHKLYW',
+        'JPBRUTWP', 'JSLXRQOK', 'KAGJCHMR', 'KEUWZRKO', 'KJNSOAHR',
+        'LLHREMKS', 'LPHPPJUG', 'LRVGFDFM', 'LSOIUSXD', 'LTOYKIML',
+        'LUENUFGA', 'MBSBZBXA', 'NZKBIBNU', 'OJIFIHMZ', 'OKMBFVKS',
+        'OXKURKXR', 'QJQJSWFU', 'QKXNTIIB', 'QRKRBYJL', 'QVLMOEYE',
+        'RAWUKQMJ', 'RCBZUSIM', 'RJGPVEXX', 'ROACSLMG', 'SAAYMURU',
+        'SAHWCZNH', 'SDWAYPIK', 'SNHYOVBM', 'STZDBITS', 'SUOYXCHP',
+        'UGEQLMXM', 'UIFPPCLR', 'UQYUIVVR', 'UXSPKBJR', 'VBYCLTYZ',
+        'VMAQSTJE', 'VUAFAIYJ', 'VWMBASNE', 'WBLJNPZQ', 'WHPUAOID',
+        'WPQXWHYO', 'WQMVCOEM', 'XIFHSOWQ', 'XIPPENFQ', 'XMKRPGLB',
+        'XUOIQPFL', 'YSYHGLQK', 'ZCELVYQU', 'ZGJXVMNI', 'ZKENOUDA',
+        'ZXERAXWP'], dtype=object),
+ 'seq_cnt_low': array(['ANWUJOKX', 'GIKPEWTY', 'GMBFCMIU', 'KFQSHBNH', 'PLMZALFA',
+        'QSDCUCLB', 'RJCAXSGH', 'RUVXNNVA', 'TANNMIMB'], dtype=object),
+ 'seq_cnt_mid': array(['AANGBULD', 'BLANHGYY', 'DJBLNPNC', 'FWUCPMMW', 'MIRCVAMV',
+        'NAQIHUKZ', 'OGAFEHLU', 'PYZMVUWD', 'TGOELCAG', 'XIIEJNEE'],
+       dtype=object)}
+
+topN_seq_cat = tmp_df_seq['seq_cat'].values
+topN_seq_cat
+array(['seq_cnt_high', 'seq_cnt_low', 'seq_cnt_mid'], dtype=object)
+
+###
+### sel_topN_seq_cat = 1 경우
+### 
+
+sel_topN_seq_cat = 1
+print(f'top{sel_topN_seq_cat}_seq_cat={topN_seq_cat[sel_topN_seq_cat-1]}, {len(dct_seq_cat[topN_seq_cat[sel_topN_seq_cat-1]])}개 아이템, {dct_seq_cat[topN_seq_cat[sel_topN_seq_cat-1]]}') # top1_hs4 : ['BSRMSVTC' 'DJBLNPNC' 'RCBZUSIM' 'SUOYXCHP' 'WQMVCOEM' 'ZKENOUDA']
+
+df_hm_plot = pd.DataFrame()
+j= 0
+fig = plt.figure(figsize=(12,4))
+for i, group in enumerate(monthly.groupby("item_id")[['item_id','ym', 'value']]):
+    if group[0] in dct_seq_cat[topN_seq_cat[sel_topN_seq_cat-1]]:
+        j += 1
+        print(f'index = {i+1}, {j}th item, item name: {group[0]}')
+
+        df_hm_plot = pd.concat([df_hm_plot, group[1]], axis=0)
+
+        ax = plt.gca()
+        ax.plot(group[1]["ym"], (group[1]["value"]- group[1]["value"].min())/(group[1]["value"].max()- group[1]["value"].min()), label=f'pid={group[0]}', marker='d')
+
+        ax.set_xlim([monthly['ym'].min(), monthly['ym'].max()])
+        ax.legend()
+        ax.grid()
+        
+    
+display(df_hm_plot)
+fig_sns = plt.figure(figsize=(8,6))
+corr_mat= pd.pivot_table(df_hm_plot, index='ym', columns='item_id', values='value', fill_value=0).corr()
+sns.heatmap(corr_mat, annot=True, fmt=".2f",vmin=-1, vmax=1, cbar_kws={'ticks': [-1, -0.5, 0, 0.5, 1]}, center=0 )
+top1_seq_cat=seq_cnt_high, 81개 아이템, ['AHMDUILJ' 'APQGTRMF' 'ATLDMDBO' 'AXULOHBQ' 'BEZYMBBT' 'BJALXPFS'
+ 'BSRMSVTC' 'BTMOEMEP' 'BUZIIBYG' 'CCLHWFWF' 'DBWLZWNK' 'DDEXPPXU'
+ 'DEWLVASR' 'DNMPSKTB' 'DUCMGGNW' 'ELQGMQWE' 'EVBVXETX' 'FCYBOAXC'
+ 'FDXPMYGF' 'FITUEHWN' 'FQCLOEXA' 'FRHNWLNI' 'FTSVTTSR' 'GKQIJYDH'
+ 'GYHKIVQT' 'HCDTGMST' 'HXYSSRXE' 'IGDVVKUD' 'JBVHSUWY' 'JERHKLYW'
+ 'JPBRUTWP' 'JSLXRQOK' 'KAGJCHMR' 'KEUWZRKO' 'KJNSOAHR' 'LLHREMKS'
+ 'LPHPPJUG' 'LRVGFDFM' 'LSOIUSXD' 'LTOYKIML' 'LUENUFGA' 'MBSBZBXA'
+ 'NZKBIBNU' 'OJIFIHMZ' 'OKMBFVKS' 'OXKURKXR' 'QJQJSWFU' 'QKXNTIIB'
+ 'QRKRBYJL' 'QVLMOEYE' 'RAWUKQMJ' 'RCBZUSIM' 'RJGPVEXX' 'ROACSLMG'
+ 'SAAYMURU' 'SAHWCZNH' 'SDWAYPIK' 'SNHYOVBM' 'STZDBITS' 'SUOYXCHP'
+ 'UGEQLMXM' 'UIFPPCLR' 'UQYUIVVR' 'UXSPKBJR' 'VBYCLTYZ' 'VMAQSTJE'
+ 'VUAFAIYJ' 'VWMBASNE' 'WBLJNPZQ' 'WHPUAOID' 'WPQXWHYO' 'WQMVCOEM'
+ 'XIFHSOWQ' 'XIPPENFQ' 'XMKRPGLB' 'XUOIQPFL' 'YSYHGLQK' 'ZCELVYQU'
+ 'ZGJXVMNI' 'ZKENOUDA' 'ZXERAXWP']
+index = 2, 1th item, item name: AHMDUILJ
+index = 4, 2th item, item name: APQGTRMF
+index = 5, 3th item, item name: ATLDMDBO
+index = 6, 4th item, item name: AXULOHBQ
+index = 7, 5th item, item name: BEZYMBBT
+index = 8, 6th item, item name: BJALXPFS
+index = 10, 7th item, item name: BSRMSVTC
+index = 11, 8th item, item name: BTMOEMEP
+index = 12, 9th item, item name: BUZIIBYG
+index = 13, 10th item, item name: CCLHWFWF
+index = 14, 11th item, item name: DBWLZWNK
+index = 15, 12th item, item name: DDEXPPXU
+index = 16, 13th item, item name: DEWLVASR
+index = 18, 14th item, item name: DNMPSKTB
+index = 19, 15th item, item name: DUCMGGNW
+index = 20, 16th item, item name: ELQGMQWE
+index = 21, 17th item, item name: EVBVXETX
+index = 22, 18th item, item name: FCYBOAXC
+index = 23, 19th item, item name: FDXPMYGF
+index = 24, 20th item, item name: FITUEHWN
+index = 25, 21th item, item name: FQCLOEXA
+index = 26, 22th item, item name: FRHNWLNI
+index = 27, 23th item, item name: FTSVTTSR
+index = 30, 24th item, item name: GKQIJYDH
+index = 32, 25th item, item name: GYHKIVQT
+index = 33, 26th item, item name: HCDTGMST
+index = 34, 27th item, item name: HXYSSRXE
+index = 35, 28th item, item name: IGDVVKUD
+index = 36, 29th item, item name: JBVHSUWY
+index = 37, 30th item, item name: JERHKLYW
+index = 38, 31th item, item name: JPBRUTWP
+index = 39, 32th item, item name: JSLXRQOK
+index = 40, 33th item, item name: KAGJCHMR
+index = 41, 34th item, item name: KEUWZRKO
+index = 43, 35th item, item name: KJNSOAHR
+index = 44, 36th item, item name: LLHREMKS
+index = 45, 37th item, item name: LPHPPJUG
+index = 46, 38th item, item name: LRVGFDFM
+index = 47, 39th item, item name: LSOIUSXD
+index = 48, 40th item, item name: LTOYKIML
+index = 49, 41th item, item name: LUENUFGA
+index = 50, 42th item, item name: MBSBZBXA
+index = 53, 43th item, item name: NZKBIBNU
+index = 55, 44th item, item name: OJIFIHMZ
+index = 56, 45th item, item name: OKMBFVKS
+index = 57, 46th item, item name: OXKURKXR
+index = 60, 47th item, item name: QJQJSWFU
+index = 61, 48th item, item name: QKXNTIIB
+index = 62, 49th item, item name: QRKRBYJL
+index = 64, 50th item, item name: QVLMOEYE
+index = 65, 51th item, item name: RAWUKQMJ
+index = 66, 52th item, item name: RCBZUSIM
+index = 68, 53th item, item name: RJGPVEXX
+index = 69, 54th item, item name: ROACSLMG
+index = 71, 55th item, item name: SAAYMURU
+index = 72, 56th item, item name: SAHWCZNH
+index = 73, 57th item, item name: SDWAYPIK
+index = 74, 58th item, item name: SNHYOVBM
+index = 75, 59th item, item name: STZDBITS
+index = 76, 60th item, item name: SUOYXCHP
+index = 79, 61th item, item name: UGEQLMXM
+index = 80, 62th item, item name: UIFPPCLR
+index = 81, 63th item, item name: UQYUIVVR
+index = 82, 64th item, item name: UXSPKBJR
+index = 83, 65th item, item name: VBYCLTYZ
+index = 84, 66th item, item name: VMAQSTJE
+index = 85, 67th item, item name: VUAFAIYJ
+index = 86, 68th item, item name: VWMBASNE
+index = 87, 69th item, item name: WBLJNPZQ
+index = 88, 70th item, item name: WHPUAOID
+index = 89, 71th item, item name: WPQXWHYO
+index = 90, 72th item, item name: WQMVCOEM
+index = 91, 73th item, item name: XIFHSOWQ
+index = 93, 74th item, item name: XIPPENFQ
+index = 94, 75th item, item name: XMKRPGLB
+index = 95, 76th item, item name: XUOIQPFL
+index = 96, 77th item, item name: YSYHGLQK
+index = 97, 78th item, item name: ZCELVYQU
+index = 98, 79th item, item name: ZGJXVMNI
+index = 99, 80th item, item name: ZKENOUDA
+index = 100, 81th item, item name: ZXERAXWP
+item_id	ym	value
+29	AHMDUILJ	2022-01-01	242705.0
+30	AHMDUILJ	2022-02-01	120847.0
+31	AHMDUILJ	2022-03-01	197317.0
+32	AHMDUILJ	2022-04-01	126142.0
+33	AHMDUILJ	2022-05-01	71730.0
+...	...	...	...
+3771	ZXERAXWP	2025-03-01	12817.0
+3772	ZXERAXWP	2025-04-01	12482.0
+3773	ZXERAXWP	2025-05-01	18224.0
+3774	ZXERAXWP	2025-06-01	42690.0
+3775	ZXERAXWP	2025-07-01	20678.0
+3441 rows × 3 columns
+
+<Axes: xlabel='item_id', ylabel='item_id'>
+
+
+
+corr_mat[corr_mat.abs() > 0.5]
+item_id	AHMDUILJ	APQGTRMF	ATLDMDBO	AXULOHBQ	BEZYMBBT	BJALXPFS	BSRMSVTC	BTMOEMEP	BUZIIBYG	CCLHWFWF	...	WQMVCOEM	XIFHSOWQ	XIPPENFQ	XMKRPGLB	XUOIQPFL	YSYHGLQK	ZCELVYQU	ZGJXVMNI	ZKENOUDA	ZXERAXWP
+item_id																					
+AHMDUILJ	1.0	NaN	NaN	NaN	NaN	NaN	NaN	NaN	NaN	NaN	...	NaN	NaN	NaN	NaN	NaN	NaN	NaN	NaN	NaN	NaN
+APQGTRMF	NaN	1.000000	0.548979	NaN	NaN	NaN	NaN	NaN	NaN	NaN	...	0.586799	NaN	NaN	NaN	NaN	NaN	NaN	NaN	NaN	NaN
+ATLDMDBO	NaN	0.548979	1.000000	NaN	NaN	NaN	NaN	0.686812	NaN	NaN	...	NaN	NaN	NaN	NaN	0.707539	NaN	NaN	-0.528831	NaN	NaN
+AXULOHBQ	NaN	NaN	NaN	1.0	NaN	NaN	NaN	NaN	NaN	NaN	...	NaN	NaN	NaN	NaN	NaN	NaN	NaN	NaN	NaN	NaN
+BEZYMBBT	NaN	NaN	NaN	NaN	1.0	NaN	NaN	NaN	NaN	NaN	...	NaN	NaN	NaN	NaN	NaN	NaN	NaN	NaN	NaN	NaN
+...	...	...	...	...	...	...	...	...	...	...	...	...	...	...	...	...	...	...	...	...	...
+YSYHGLQK	NaN	NaN	NaN	NaN	NaN	NaN	NaN	NaN	NaN	NaN	...	NaN	NaN	NaN	NaN	NaN	1.0	NaN	NaN	NaN	NaN
+ZCELVYQU	NaN	NaN	NaN	NaN	NaN	NaN	NaN	NaN	NaN	NaN	...	NaN	NaN	NaN	NaN	NaN	NaN	1.0	NaN	NaN	NaN
+ZGJXVMNI	NaN	NaN	-0.528831	NaN	NaN	NaN	NaN	NaN	NaN	NaN	...	NaN	NaN	NaN	NaN	NaN	NaN	NaN	1.000000	0.616375	NaN
+ZKENOUDA	NaN	NaN	NaN	NaN	NaN	NaN	NaN	NaN	NaN	NaN	...	NaN	NaN	NaN	NaN	NaN	NaN	NaN	0.616375	1.000000	NaN
+ZXERAXWP	NaN	NaN	NaN	NaN	NaN	NaN	NaN	NaN	NaN	NaN	...	NaN	NaN	NaN	NaN	NaN	NaN	NaN	NaN	NaN	1.0
+81 rows × 81 columns
+
+
+# corr()값이 높은 pair를 필터링 하기위함
+high_corr = []
+for i, row in enumerate(corr_mat[(corr_mat.abs() > 0.6) & corr_mat[(corr_mat.abs() < 0.99)]].iterrows()):
+    if row[1].any():
+        print(( row[1][row[1].notna()].name, row[1][row[1].notna()].index.to_list()))
+        high_corr.append((row[1][row[1].notna()].name, row[1][row[1].notna()].index.to_list()))
+('ATLDMDBO', ['BTMOEMEP', 'DNMPSKTB', 'LRVGFDFM', 'QRKRBYJL', 'QVLMOEYE', 'VBYCLTYZ', 'XUOIQPFL'])
+('BSRMSVTC', ['SUOYXCHP'])
+('BTMOEMEP', ['ATLDMDBO', 'LRVGFDFM'])
+('DEWLVASR', ['ZKENOUDA'])
+('DNMPSKTB', ['ATLDMDBO', 'LRVGFDFM', 'XUOIQPFL'])
+('GYHKIVQT', ['QVLMOEYE'])
+('IGDVVKUD', ['UGEQLMXM'])
+('JPBRUTWP', ['QRKRBYJL', 'SDWAYPIK', 'VBYCLTYZ'])
+('KEUWZRKO', ['SAHWCZNH'])
+('LRVGFDFM', ['ATLDMDBO', 'BTMOEMEP', 'DNMPSKTB', 'XUOIQPFL'])
+('LUENUFGA', ['XIFHSOWQ'])
+('QRKRBYJL', ['ATLDMDBO', 'JPBRUTWP', 'QVLMOEYE', 'SDWAYPIK', 'VBYCLTYZ'])
+('QVLMOEYE', ['ATLDMDBO', 'GYHKIVQT', 'QRKRBYJL', 'SDWAYPIK', 'VBYCLTYZ'])
+('ROACSLMG', ['VBYCLTYZ'])
+('SAHWCZNH', ['KEUWZRKO', 'WPQXWHYO'])
+('SDWAYPIK', ['JPBRUTWP', 'QRKRBYJL', 'QVLMOEYE'])
+('SUOYXCHP', ['BSRMSVTC'])
+('UGEQLMXM', ['IGDVVKUD'])
+('VBYCLTYZ', ['ATLDMDBO', 'JPBRUTWP', 'QRKRBYJL', 'QVLMOEYE', 'ROACSLMG'])
+('WPQXWHYO', ['SAHWCZNH'])
+('XIFHSOWQ', ['LUENUFGA'])
+('XUOIQPFL', ['ATLDMDBO', 'DNMPSKTB', 'LRVGFDFM'])
+('ZGJXVMNI', ['ZKENOUDA'])
+('ZKENOUDA', ['DEWLVASR', 'ZGJXVMNI'])
+
+dict_hight_corr = dict(high_corr)
+dict_hight_corr
+{'ATLDMDBO': ['BTMOEMEP',
+  'DNMPSKTB',
+  'LRVGFDFM',
+  'QRKRBYJL',
+  'QVLMOEYE',
+  'VBYCLTYZ',
+  'XUOIQPFL'],
+ 'BSRMSVTC': ['SUOYXCHP'],
+ 'BTMOEMEP': ['ATLDMDBO', 'LRVGFDFM'],
+ 'DEWLVASR': ['ZKENOUDA'],
+ 'DNMPSKTB': ['ATLDMDBO', 'LRVGFDFM', 'XUOIQPFL'],
+ 'GYHKIVQT': ['QVLMOEYE'],
+ 'IGDVVKUD': ['UGEQLMXM'],
+ 'JPBRUTWP': ['QRKRBYJL', 'SDWAYPIK', 'VBYCLTYZ'],
+ 'KEUWZRKO': ['SAHWCZNH'],
+ 'LRVGFDFM': ['ATLDMDBO', 'BTMOEMEP', 'DNMPSKTB', 'XUOIQPFL'],
+ 'LUENUFGA': ['XIFHSOWQ'],
+ 'QRKRBYJL': ['ATLDMDBO', 'JPBRUTWP', 'QVLMOEYE', 'SDWAYPIK', 'VBYCLTYZ'],
+ 'QVLMOEYE': ['ATLDMDBO', 'GYHKIVQT', 'QRKRBYJL', 'SDWAYPIK', 'VBYCLTYZ'],
+ 'ROACSLMG': ['VBYCLTYZ'],
+ 'SAHWCZNH': ['KEUWZRKO', 'WPQXWHYO'],
+ 'SDWAYPIK': ['JPBRUTWP', 'QRKRBYJL', 'QVLMOEYE'],
+ 'SUOYXCHP': ['BSRMSVTC'],
+ 'UGEQLMXM': ['IGDVVKUD'],
+ 'VBYCLTYZ': ['ATLDMDBO', 'JPBRUTWP', 'QRKRBYJL', 'QVLMOEYE', 'ROACSLMG'],
+ 'WPQXWHYO': ['SAHWCZNH'],
+ 'XIFHSOWQ': ['LUENUFGA'],
+ 'XUOIQPFL': ['ATLDMDBO', 'DNMPSKTB', 'LRVGFDFM'],
+ 'ZGJXVMNI': ['ZKENOUDA'],
+ 'ZKENOUDA': ['DEWLVASR', 'ZGJXVMNI']}
+
+pivot.head()
+ym	2022-01-01	2022-02-01	2022-03-01	2022-04-01	2022-05-01	2022-06-01	2022-07-01	2022-08-01	2022-09-01	2022-10-01	...	2024-10-01	2024-11-01	2024-12-01	2025-01-01	2025-02-01	2025-03-01	2025-04-01	2025-05-01	2025-06-01	2025-07-01
+item_id																					
+AANGBULD	14276.0	52347.0	53549.0	0.0	26997.0	84489.0	0.0	0.0	0.0	0.0	...	428725.0	144248.0	26507.0	25691.0	25805.0	0.0	38441.0	0.0	441275.0	533478.0
+AHMDUILJ	242705.0	120847.0	197317.0	126142.0	71730.0	149138.0	186617.0	169995.0	140547.0	89292.0	...	123085.0	143451.0	78649.0	125098.0	80404.0	157401.0	115509.0	127473.0	89479.0	101317.0
+ANWUJOKX	0.0	0.0	0.0	63580.0	81670.0	26424.0	8470.0	0.0	0.0	80475.0	...	0.0	0.0	0.0	27980.0	0.0	0.0	0.0	0.0	0.0	0.0
+APQGTRMF	383999.0	512813.0	217064.0	470398.0	539873.0	582317.0	759980.0	216019.0	537693.0	205326.0	...	683581.0	2147.0	0.0	25013.0	77.0	20741.0	2403.0	3543.0	32430.0	40608.0
+ATLDMDBO	143097177.0	103568323.0	118403737.0	121873741.0	115024617.0	65716075.0	146216818.0	97552978.0	72341427.0	87454167.0	...	60276050.0	30160198.0	42613728.0	64451013.0	38667429.0	29354408.0	42450439.0	37136720.0	32181798.0	57090235.0
+5 rows × 43 columns
+
+
+pivot.loc['AANGBULD']
+ym
+2022-01-01     14276.0
+2022-02-01     52347.0
+2022-03-01     53549.0
+2022-04-01         0.0
+2022-05-01     26997.0
+2022-06-01     84489.0
+2022-07-01         0.0
+2022-08-01         0.0
+2022-09-01         0.0
+2022-10-01         0.0
+2022-11-01       299.0
+2022-12-01       574.0
+2023-01-01         0.0
+2023-02-01     41353.0
+2023-03-01         0.0
+2023-04-01         0.0
+2023-05-01     26524.0
+2023-06-01       340.0
+2023-07-01         0.0
+2023-08-01     41142.0
+2023-09-01         0.0
+2023-10-01     27888.0
+2023-11-01         0.0
+2023-12-01     41311.0
+2024-01-01     26645.0
+2024-02-01     26237.0
+2024-03-01     39044.0
+2024-04-01    315325.0
+2024-05-01         0.0
+2024-06-01    218073.0
+2024-07-01    133775.0
+2024-08-01    465327.0
+2024-09-01    313076.0
+2024-10-01    428725.0
+2024-11-01    144248.0
+2024-12-01     26507.0
+2025-01-01     25691.0
+2025-02-01     25805.0
+2025-03-01         0.0
+2025-04-01     38441.0
+2025-05-01         0.0
+2025-06-01    441275.0
+2025-07-01    533478.0
+Name: AANGBULD, dtype: float64
+
+for i, (k, v) in enumerate(dict_hight_corr.items()):
+    if k != 'ATLDMDBO': continue
+    print(f'index = {i+1}, item, item name: {k} : {v}')
+
+    fig = plt.figure(figsize=(12,4))
+
+    ax = plt.gca()
+    ax.plot((pivot.loc[k]-pivot.loc[k].min())/(pivot.loc[k].max()-pivot.loc[k].min()), label=f'key: {k}')
+    
+    for j, item in enumerate(v):
+        ax.plot((pivot.loc[item]-pivot.loc[item].min())/(pivot.loc[item].max()-pivot.loc[item].min()), label=f'item: {item}')
+        
+    
+    ax.set_xlim([monthly['ym'].min(), monthly['ym'].max()])
+    ax.legend()
+    ax.grid()
+    break
+index = 1, item, item name: ATLDMDBO : ['BTMOEMEP', 'DNMPSKTB', 'LRVGFDFM', 'QRKRBYJL', 'QVLMOEYE', 'VBYCLTYZ', 'XUOIQPFL']
+
+
+dict_hight_corr.items()
+dict_items([('ATLDMDBO', ['BTMOEMEP', 'DNMPSKTB', 'LRVGFDFM', 'QRKRBYJL', 'QVLMOEYE', 'VBYCLTYZ', 'XUOIQPFL']), ('BSRMSVTC', ['SUOYXCHP']), ('BTMOEMEP', ['ATLDMDBO', 'LRVGFDFM']), ('DEWLVASR', ['ZKENOUDA']), ('DNMPSKTB', ['ATLDMDBO', 'LRVGFDFM', 'XUOIQPFL']), ('GYHKIVQT', ['QVLMOEYE']), ('IGDVVKUD', ['UGEQLMXM']), ('JPBRUTWP', ['QRKRBYJL', 'SDWAYPIK', 'VBYCLTYZ']), ('KEUWZRKO', ['SAHWCZNH']), ('LRVGFDFM', ['ATLDMDBO', 'BTMOEMEP', 'DNMPSKTB', 'XUOIQPFL']), ('LUENUFGA', ['XIFHSOWQ']), ('QRKRBYJL', ['ATLDMDBO', 'JPBRUTWP', 'QVLMOEYE', 'SDWAYPIK', 'VBYCLTYZ']), ('QVLMOEYE', ['ATLDMDBO', 'GYHKIVQT', 'QRKRBYJL', 'SDWAYPIK', 'VBYCLTYZ']), ('ROACSLMG', ['VBYCLTYZ']), ('SAHWCZNH', ['KEUWZRKO', 'WPQXWHYO']), ('SDWAYPIK', ['JPBRUTWP', 'QRKRBYJL', 'QVLMOEYE']), ('SUOYXCHP', ['BSRMSVTC']), ('UGEQLMXM', ['IGDVVKUD']), ('VBYCLTYZ', ['ATLDMDBO', 'JPBRUTWP', 'QRKRBYJL', 'QVLMOEYE', 'ROACSLMG']), ('WPQXWHYO', ['SAHWCZNH']), ('XIFHSOWQ', ['LUENUFGA']), ('XUOIQPFL', ['ATLDMDBO', 'DNMPSKTB', 'LRVGFDFM']), ('ZGJXVMNI', ['ZKENOUDA']), ('ZKENOUDA', ['DEWLVASR', 'ZGJXVMNI'])])
+
+mod_dict_hight_cor = {}
+
+for i, (k, v) in enumerate(dict_hight_corr.items()):
+    print(f'index = {i+1}, item, item name: {k} : {v}')
+    
+    fig = plt.figure(figsize=(12,4))
+    df_hm_plot = pivot.loc[k].to_frame(name=k)
+    ax = plt.gca()
+    key_name1 = f'{k}'     
+
+    lbl_hmap = []
+    lbl_hmap.append(key_name1)
+    
+    ax.plot((pivot.loc[k] - pivot.loc[k].min()) / (pivot.loc[k].max()- pivot.loc[k].min()), label=key_name1)
+    
+    df_hm_plot = pd.concat([df_hm_plot, pivot.loc[k]], axis=0)
+    
+    for j, item in enumerate(v):
+        key_name2 = f'{item}'
+        lbl_hmap.append(key_name2)
+        
+        ax.plot((pivot.loc[item]- pivot.loc[item].min())/(pivot.loc[item].max()- pivot.loc[item].min()), label=key_name2, marker='d')
+        
+        df_hm_plot[f'{item}'] = pivot.loc[item]
+    
+    
+    fig_sns = plt.figure(figsize=(8,6))
+    
+    corr_mat= df_hm_plot.corr()
+    ax.legend()
+    
+    sns.heatmap(corr_mat, annot=True, fmt=".2f", xticklabels=lbl_hmap, yticklabels= lbl_hmap, vmin=-1, vmax=1, center=0)
+    
+    tmp_dict = {}
+    for m, item in enumerate(dict_hight_corr[k]): # [ v1, v2]
+        tmp_dict[item] = round(float(corr_mat.iloc[0, m+1]), 2)
+    
+    mod_dict_hight_cor[k] = tmp_dict
+        
+ax.set_xlim([monthly['ym'].min(), monthly['ym'].max()])
+ax.grid()
+plt.show()
+index = 1, item, item name: ATLDMDBO : ['BTMOEMEP', 'DNMPSKTB', 'LRVGFDFM', 'QRKRBYJL', 'QVLMOEYE', 'VBYCLTYZ', 'XUOIQPFL']
+index = 2, item, item name: BSRMSVTC : ['SUOYXCHP']
+index = 3, item, item name: BTMOEMEP : ['ATLDMDBO', 'LRVGFDFM']
+index = 4, item, item name: DEWLVASR : ['ZKENOUDA']
+index = 5, item, item name: DNMPSKTB : ['ATLDMDBO', 'LRVGFDFM', 'XUOIQPFL']
+index = 6, item, item name: GYHKIVQT : ['QVLMOEYE']
+index = 7, item, item name: IGDVVKUD : ['UGEQLMXM']
+index = 8, item, item name: JPBRUTWP : ['QRKRBYJL', 'SDWAYPIK', 'VBYCLTYZ']
+index = 9, item, item name: KEUWZRKO : ['SAHWCZNH']
+index = 10, item, item name: LRVGFDFM : ['ATLDMDBO', 'BTMOEMEP', 'DNMPSKTB', 'XUOIQPFL']
+index = 11, item, item name: LUENUFGA : ['XIFHSOWQ']
+C:\Users\TJ\AppData\Local\Temp\ipykernel_13520\3245773323.py:6: RuntimeWarning: More than 20 figures have been opened. Figures created through the pyplot interface (`matplotlib.pyplot.figure`) are retained until explicitly closed and may consume too much memory. (To control this warning, see the rcParam `figure.max_open_warning`). Consider using `matplotlib.pyplot.close()`.
+  fig = plt.figure(figsize=(12,4))
+index = 12, item, item name: QRKRBYJL : ['ATLDMDBO', 'JPBRUTWP', 'QVLMOEYE', 'SDWAYPIK', 'VBYCLTYZ']
+index = 13, item, item name: QVLMOEYE : ['ATLDMDBO', 'GYHKIVQT', 'QRKRBYJL', 'SDWAYPIK', 'VBYCLTYZ']
+index = 14, item, item name: ROACSLMG : ['VBYCLTYZ']
+index = 15, item, item name: SAHWCZNH : ['KEUWZRKO', 'WPQXWHYO']
+index = 16, item, item name: SDWAYPIK : ['JPBRUTWP', 'QRKRBYJL', 'QVLMOEYE']
+index = 17, item, item name: SUOYXCHP : ['BSRMSVTC']
+index = 18, item, item name: UGEQLMXM : ['IGDVVKUD']
+index = 19, item, item name: VBYCLTYZ : ['ATLDMDBO', 'JPBRUTWP', 'QRKRBYJL', 'QVLMOEYE', 'ROACSLMG']
+index = 20, item, item name: WPQXWHYO : ['SAHWCZNH']
+index = 21, item, item name: XIFHSOWQ : ['LUENUFGA']
+index = 22, item, item name: XUOIQPFL : ['ATLDMDBO', 'DNMPSKTB', 'LRVGFDFM']
+index = 23, item, item name: ZGJXVMNI : ['ZKENOUDA']
+index = 24, item, item name: ZKENOUDA : ['DEWLVASR', 'ZGJXVMNI']
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+###
+### sel_topN_seq_cat = 2 경우
+### 
+
+sel_topN_seq_cat = 2
+print(f'top{sel_topN_seq_cat}_seq_cat={topN_seq_cat[sel_topN_seq_cat-1]}, {len(dct_seq_cat[topN_seq_cat[sel_topN_seq_cat-1]])}개 아이템, {dct_seq_cat[topN_seq_cat[sel_topN_seq_cat-1]]}') # top1_hs4 : ['BSRMSVTC' 'DJBLNPNC' 'RCBZUSIM' 'SUOYXCHP' 'WQMVCOEM' 'ZKENOUDA']
+
+df_hm_plot = pd.DataFrame()
+j= 0
+fig = plt.figure(figsize=(12,4))
+for i, group in enumerate(monthly.groupby("item_id")[['item_id','ym', 'value']]):
+    if group[0] in dct_seq_cat[topN_seq_cat[sel_topN_seq_cat-1]]:
+        j += 1
+        print(f'index = {i+1}, {j}th item, item name: {group[0]}')
+
+        df_hm_plot = pd.concat([df_hm_plot, group[1]], axis=0)
+
+        ax = plt.gca()
+        ax.plot(group[1]["ym"], (group[1]["value"]- group[1]["value"].min())/(group[1]["value"].max()- group[1]["value"].min()), label=f'pid={group[0]}', marker='d')
+
+        ax.set_xlim([monthly['ym'].min(), monthly['ym'].max()])
+        ax.legend()
+        ax.grid()
+        
+fig_sns = plt.figure(figsize=(8,6))
+corr_mat= pd.pivot_table(df_hm_plot, index='ym', columns='item_id', values='value', fill_value=0).corr()
+sns.heatmap(corr_mat, annot=True, fmt=".2f",vmin=-1, vmax=1, cbar_kws={'ticks': [-1, -0.5, 0, 0.5, 1]}, center=0 )
+top2_seq_cat=seq_cnt_low, 9개 아이템, ['ANWUJOKX' 'GIKPEWTY' 'GMBFCMIU' 'KFQSHBNH' 'PLMZALFA' 'QSDCUCLB'
+ 'RJCAXSGH' 'RUVXNNVA' 'TANNMIMB']
+index = 3, 1th item, item name: ANWUJOKX
+index = 29, 2th item, item name: GIKPEWTY
+index = 31, 3th item, item name: GMBFCMIU
+index = 42, 4th item, item name: KFQSHBNH
+index = 58, 5th item, item name: PLMZALFA
+index = 63, 6th item, item name: QSDCUCLB
+index = 67, 7th item, item name: RJCAXSGH
+index = 70, 8th item, item name: RUVXNNVA
+index = 77, 9th item, item name: TANNMIMB
+<Axes: xlabel='item_id', ylabel='item_id'>
+
+
+
+high_corr = []
+for i, row in enumerate(corr_mat[(corr_mat.abs() > 0.5) & corr_mat[(corr_mat.abs() < 0.99)]].iterrows()):
+    if row[1].any():
+        print(( row[1][row[1].notna()].name, row[1][row[1].notna()].index.to_list()))
+        high_corr.append((row[1][row[1].notna()].name, row[1][row[1].notna()].index.to_list()))
+('ANWUJOKX', ['GMBFCMIU'])
+('GMBFCMIU', ['ANWUJOKX'])
+('KFQSHBNH', ['RJCAXSGH'])
+('RJCAXSGH', ['KFQSHBNH'])
+
+dict_hight_corr = dict(high_corr)
+dict_hight_corr
+{'ANWUJOKX': ['GMBFCMIU'],
+ 'GMBFCMIU': ['ANWUJOKX'],
+ 'KFQSHBNH': ['RJCAXSGH'],
+ 'RJCAXSGH': ['KFQSHBNH']}
+
+mod_dict_hight_cor = {}
+
+for i, (k, v) in enumerate(dict_hight_corr.items()):
+    print(f'index = {i+1}, item, item name: {k} : {v}')
+    
+    fig = plt.figure(figsize=(12,4))
+    df_hm_plot = pivot.loc[k].to_frame(name=k)
+    ax = plt.gca()
+    key_name1 = f'{k}'     
+
+    lbl_hmap = []
+    lbl_hmap.append(key_name1)
+    
+    ax.plot((pivot.loc[k] - pivot.loc[k].min()) / (pivot.loc[k].max()- pivot.loc[k].min()), label=key_name1)
+    
+    df_hm_plot = pd.concat([df_hm_plot, pivot.loc[k]], axis=0)
+    
+    for j, item in enumerate(v):
+        key_name2 = f'{item}'
+        lbl_hmap.append(key_name2)
+        
+        ax.plot((pivot.loc[item]- pivot.loc[item].min())/(pivot.loc[item].max()- pivot.loc[item].min()), label=key_name2, marker='d')
+        
+        df_hm_plot[f'{item}'] = pivot.loc[item]
+    
+    
+    fig_sns = plt.figure(figsize=(8,6))
+    
+    corr_mat= df_hm_plot.corr()
+    ax.legend()
+    
+    sns.heatmap(corr_mat, annot=True, fmt=".2f", xticklabels=lbl_hmap, yticklabels= lbl_hmap, vmin=-1, vmax=1, center=0)
+    
+    tmp_dict = {}
+    for m, item in enumerate(dict_hight_corr[k]): # [ v1, v2]
+        tmp_dict[item] = round(float(corr_mat.iloc[0, m+1]), 2)
+    
+index = 1, item, item name: ANWUJOKX : ['GMBFCMIU']
+index = 2, item, item name: GMBFCMIU : ['ANWUJOKX']
+index = 3, item, item name: KFQSHBNH : ['RJCAXSGH']
+index = 4, item, item name: RJCAXSGH : ['KFQSHBNH']
+
+
+
+
+
+
+
+
+
+###
+### sel_topN_seq_cat = 3 경우
+### 
+
+sel_topN_seq_cat = 3
+print(f'top{sel_topN_seq_cat}_seq_cat={topN_seq_cat[sel_topN_seq_cat-1]}, {len(dct_seq_cat[topN_seq_cat[sel_topN_seq_cat-1]])}개 아이템, {dct_seq_cat[topN_seq_cat[sel_topN_seq_cat-1]]}') # top1_hs4 : ['BSRMSVTC' 'DJBLNPNC' 'RCBZUSIM' 'SUOYXCHP' 'WQMVCOEM' 'ZKENOUDA']
+
+df_hm_plot = pd.DataFrame()
+j= 0
+fig = plt.figure(figsize=(12,4))
+for i, group in enumerate(monthly.groupby("item_id")[['item_id','ym', 'value']]):
+    if group[0] in dct_seq_cat[topN_seq_cat[sel_topN_seq_cat-1]]:
+        j += 1
+        print(f'index = {i+1}, {j}th item, item name: {group[0]}')
+
+        df_hm_plot = pd.concat([df_hm_plot, group[1]], axis=0)
+
+        ax = plt.gca()
+        ax.plot(group[1]["ym"], (group[1]["value"]- group[1]["value"].min())/(group[1]["value"].max()- group[1]["value"].min()), label=f'pid={group[0]}', marker='d')
+
+        ax.set_xlim([monthly['ym'].min(), monthly['ym'].max()])
+        ax.legend()
+        ax.grid()
+        
+fig_sns = plt.figure(figsize=(8,6))
+corr_mat= pd.pivot_table(df_hm_plot, index='ym', columns='item_id', values='value', fill_value=0).corr()
+sns.heatmap(corr_mat, annot=True, fmt=".2f",vmin=-1, vmax=1, cbar_kws={'ticks': [-1, -0.5, 0, 0.5, 1]}, center=0 )
+top3_seq_cat=seq_cnt_mid, 10개 아이템, ['AANGBULD' 'BLANHGYY' 'DJBLNPNC' 'FWUCPMMW' 'MIRCVAMV' 'NAQIHUKZ'
+ 'OGAFEHLU' 'PYZMVUWD' 'TGOELCAG' 'XIIEJNEE']
+index = 1, 1th item, item name: AANGBULD
+index = 9, 2th item, item name: BLANHGYY
+index = 17, 3th item, item name: DJBLNPNC
+index = 28, 4th item, item name: FWUCPMMW
+index = 51, 5th item, item name: MIRCVAMV
+index = 52, 6th item, item name: NAQIHUKZ
+index = 54, 7th item, item name: OGAFEHLU
+index = 59, 8th item, item name: PYZMVUWD
+index = 78, 9th item, item name: TGOELCAG
+index = 92, 10th item, item name: XIIEJNEE
+<Axes: xlabel='item_id', ylabel='item_id'>
+
+
+
+high_corr = []
+for i, row in enumerate(corr_mat[(corr_mat.abs() > 0.4) & corr_mat[(corr_mat.abs() < 0.99)]].iterrows()):
+    if row[1].any():
+        print(( row[1][row[1].notna()].name, row[1][row[1].notna()].index.to_list()))
+        high_corr.append((row[1][row[1].notna()].name, row[1][row[1].notna()].index.to_list()))
+('BLANHGYY', ['FWUCPMMW'])
+('DJBLNPNC', ['FWUCPMMW'])
+('FWUCPMMW', ['BLANHGYY', 'DJBLNPNC'])
+
+dict_hight_corr = dict(high_corr)
+dict_hight_corr
+{'BLANHGYY': ['FWUCPMMW'],
+ 'DJBLNPNC': ['FWUCPMMW'],
+ 'FWUCPMMW': ['BLANHGYY', 'DJBLNPNC']}
+
+mod_dict_hight_cor = {}
+
+for i, (k, v) in enumerate(dict_hight_corr.items()):
+    print(f'index = {i+1}, item, item name: {k} : {v}')
+    
+    fig = plt.figure(figsize=(12,4))
+    df_hm_plot = pivot.loc[k].to_frame(name=k)
+    ax = plt.gca()
+    key_name1 = f'{k}'     
+
+    lbl_hmap = []
+    lbl_hmap.append(key_name1)
+    
+    ax.plot((pivot.loc[k] - pivot.loc[k].min()) / (pivot.loc[k].max()- pivot.loc[k].min()), label=key_name1)
+    
+    df_hm_plot = pd.concat([df_hm_plot, pivot.loc[k]], axis=0)
+    
+    for j, item in enumerate(v):
+        key_name2 = f'{item}'
+        lbl_hmap.append(key_name2)
+        
+        ax.plot((pivot.loc[item]- pivot.loc[item].min())/(pivot.loc[item].max()- pivot.loc[item].min()), label=key_name2, marker='d')
+        
+        df_hm_plot[f'{item}'] = pivot.loc[item]
+    
+    
+    fig_sns = plt.figure(figsize=(8,6))
+    
+    corr_mat= df_hm_plot.corr()
+    ax.legend()
+    
+    sns.heatmap(corr_mat, annot=True, fmt=".2f", xticklabels=lbl_hmap, yticklabels= lbl_hmap, vmin=-1, vmax=1, center=0)
+    
+    tmp_dict = {}
+    for m, item in enumerate(dict_hight_corr[k]): # [ v1, v2]
+        tmp_dict[item] = round(float(corr_mat.iloc[0, m+1]), 2)
+    
+    mod_dict_hight_cor[k] = tmp_dict
+        
+ax.set_xlim([monthly['ym'].min(), monthly['ym'].max()])
+ax.grid()
+plt.show()
+index = 1, item, item name: BLANHGYY : ['FWUCPMMW']
+index = 2, item, item name: DJBLNPNC : ['FWUCPMMW']
+index = 3, item, item name: FWUCPMMW : ['BLANHGYY', 'DJBLNPNC']
+
+
+
+
+
+
+공행성쌍 데이터
+각 (A, B) 쌍에 대해 lag = 1 ~ max_lag까지 Pearson 상관계수 계산
+절댓값이 가장 큰 상관계수와 lag를 선택
+|corr| >= corr_threshold이면 A→B 공행성 있다고 판단
+
+def safe_corr(x, y):
+    if np.std(x) == 0 or np.std(y) == 0:
+        return 0.0
+    return float(np.corrcoef(x, y)[0, 1])
+
+def find_comovement_pairs(pivot, max_lag=6, min_nonzero=12, corr_threshold=0.4):
+    items = pivot.index.to_list()
+    months = pivot.columns.to_list()
+    n_months = len(months)
+
+    results = []
+
+    for i, leader in tqdm(enumerate(items)):
+        x = pivot.loc[leader].values.astype(float)
+        if np.count_nonzero(x) < min_nonzero:
+            continue
+
+        for follower in items:
+            if follower == leader:
+                continue
+
+            y = pivot.loc[follower].values.astype(float)
+            if np.count_nonzero(y) < min_nonzero:
+                continue
+
+            best_lag = None
+            best_corr = 0.0
+
+            # lag = 1 ~ max_lag 탐색
+            for lag in range(1, max_lag + 1):
+                if n_months <= lag:
+                    continue
+                corr = safe_corr(x[:-lag], y[lag:])
+                if abs(corr) > abs(best_corr):
+                    best_corr = corr
+                    best_lag = lag
+
+            # 임계값 이상이면 공행성쌍으로 채택
+            if best_lag is not None and abs(best_corr) >= corr_threshold:
+                results.append({
+                    "leading_item_id": leader,
+                    "following_item_id": follower,
+                    "best_lag": best_lag,
+                    "max_corr": best_corr,
+                })
+
+    pairs = pd.DataFrame(results)
+    return pairs
+
+pairs = find_comovement_pairs(pivot)
+print("탐색된 공행성쌍 수:", len(pairs))
+pairs.head()
+100it [00:07, 13.72it/s]
+탐색된 공행성쌍 수: 1425
+leading_item_id	following_item_id	best_lag	max_corr
+0	AANGBULD	APQGTRMF	5	-0.443984
+1	AANGBULD	DEWLVASR	6	0.640221
+2	AANGBULD	DNMPSKTB	4	-0.410635
+3	AANGBULD	EVBVXETX	6	0.436623
+4	AANGBULD	FTSVTTSR	3	0.531400
+
+pairs_mod = pairs.copy()
+pairs_mod['max_corr_abs'] = pairs_mod['max_corr'].apply(np.abs)
+pairs_mod.info()
+<class 'pandas.core.frame.DataFrame'>
+RangeIndex: 1425 entries, 0 to 1424
+Data columns (total 5 columns):
+ #   Column             Non-Null Count  Dtype  
+---  ------             --------------  -----  
+ 0   leading_item_id    1425 non-null   object 
+ 1   following_item_id  1425 non-null   object 
+ 2   best_lag           1425 non-null   int64  
+ 3   max_corr           1425 non-null   float64
+ 4   max_corr_abs       1425 non-null   float64
+dtypes: float64(2), int64(1), object(2)
+memory usage: 55.8+ KB
+
+pairs_mod.describe()
+best_lag	max_corr	max_corr_abs
+count	1425.000000	1425.000000	1425.000000
+mean	3.583860	0.278850	0.500241
+std	1.721116	0.425079	0.089929
+min	1.000000	-0.708337	0.400091
+25%	2.000000	0.401780	0.431703
+50%	4.000000	0.449424	0.475313
+75%	5.000000	0.527682	0.546019
+max	6.000000	0.928613	0.928613
+
+df_pairs_mod = pairs_mod.groupby('leading_item_id')['following_item_id'] \
+    .aggregate(["size"]).sort_values(by='size', ascending=False) # or 'count'
+df_pairs_mod    
+
+###
+### ==> 따라서 100개 아이템중 9개는 공행성쌍이 탐지 되지않았다. ==> 공행성쌍이 탐지 vs. 공행성쌍이 탐지 실패 아이템으로 cat. 가능
+###
+
+dct_pair_detection = {'comv_yes':df_pairs_mod.index.to_list() , 
+                      'comv_no': set(train['item_id']).difference(set(df_pairs_mod.index.to_list()))}
+print("공행성이 탐지되지 않은 상품수: ", len(dct_pair_detection['comv_no']))
+print("공행성이 탐지되지 않은 상품id: ", dct_pair_detection['comv_no'])
+print("공행성 탐지된 상품수: ", len(dct_pair_detection['comv_yes']))
+print("공행성이 탐지된 상품id: ", dct_pair_detection['comv_yes']) 
+공행성이 탐지되지 않은 상품수:  9
+공행성이 탐지되지 않은 상품id:  {'ANWUJOKX', 'GMBFCMIU', 'RJCAXSGH', 'KFQSHBNH', 'PLMZALFA', 'GIKPEWTY', 'RUVXNNVA', 'QSDCUCLB', 'TANNMIMB'}
+공행성 탐지된 상품수:  91
+공행성이 탐지된 상품id:  ['SDWAYPIK', 'DNMPSKTB', 'QRKRBYJL', 'GYHKIVQT', 'OGAFEHLU', 'UGEQLMXM', 'XUOIQPFL', 'WBLJNPZQ', 'QVLMOEYE', 'BTMOEMEP', 'JPBRUTWP', 'APQGTRMF', 'ZGJXVMNI', 'VBYCLTYZ', 'ATLDMDBO', 'ZKENOUDA', 'LRVGFDFM', 'HXYSSRXE', 'BLANHGYY', 'OKMBFVKS', 'OXKURKXR', 'AXULOHBQ', 'XIIEJNEE', 'UXSPKBJR', 'IGDVVKUD', 'EVBVXETX', 'BSRMSVTC', 'FQCLOEXA', 'DEWLVASR', 'NZKBIBNU', 'ELQGMQWE', 'RJGPVEXX', 'DBWLZWNK', 'FDXPMYGF', 'RCBZUSIM', 'LSOIUSXD', 'BEZYMBBT', 'LLHREMKS', 'AANGBULD', 'UIFPPCLR', 'PYZMVUWD', 'SAHWCZNH', 'ROACSLMG', 'LPHPPJUG', 'VUAFAIYJ', 'CCLHWFWF', 'BJALXPFS', 'RAWUKQMJ', 'JBVHSUWY', 'LUENUFGA', 'KJNSOAHR', 'VMAQSTJE', 'DJBLNPNC', 'FWUCPMMW', 'XIFHSOWQ', 'LTOYKIML', 'WPQXWHYO', 'FRHNWLNI', 'FTSVTTSR', 'HCDTGMST', 'KEUWZRKO', 'JSLXRQOK', 'KAGJCHMR', 'AHMDUILJ', 'BUZIIBYG', 'NAQIHUKZ', 'ZCELVYQU', 'MIRCVAMV', 'UQYUIVVR', 'TGOELCAG', 'QKXNTIIB', 'WQMVCOEM', 'ZXERAXWP', 'SUOYXCHP', 'VWMBASNE', 'JERHKLYW', 'WHPUAOID', 'SAAYMURU', 'OJIFIHMZ', 'SNHYOVBM', 'FCYBOAXC', 'DUCMGGNW', 'FITUEHWN', 'STZDBITS', 'QJQJSWFU', 'GKQIJYDH', 'MBSBZBXA', 'YSYHGLQK', 'XIPPENFQ', 'DDEXPPXU', 'XMKRPGLB']
+
+df_pairs_mod.describe()
+size
+count	91.000000
+mean	15.659341
+std	9.227037
+min	2.000000
+25%	8.000000
+50%	13.000000
+75%	23.000000
+max	37.000000
+
+count, bins, container = plt.hist(df_pairs_mod['size'], bins=10, edgecolor='k', rwidth=.9) # 
+print('count :', count) 
+print('bins :', bins)   
+print('container :', container) 
+
+
+for i in range(len(bins)-1):
+    print(f'{bins[i]} ~ {bins[i+1]} : {int(count[i])}개')
+
+plt.xlabel('following_item 갯수')
+plt.ylabel('Count')
+plt.ylim([0, 20])
+plt.yticks([0, 3, 6, 9, 12, 15, 18])
+plt.grid(axis='y')
+
+plt.title("한 item에 대한 following_item 갯수 분포 히스토그램")
+plt.show()
+count : [12. 12. 18. 10.  9.  7.  8.  6.  6.  3.]
+bins : [ 2.   5.5  9.  12.5 16.  19.5 23.  26.5 30.  33.5 37. ]
+container : <BarContainer object of 10 artists>
+2.0 ~ 5.5 : 12개
+5.5 ~ 9.0 : 12개
+9.0 ~ 12.5 : 18개
+12.5 ~ 16.0 : 10개
+16.0 ~ 19.5 : 9개
+19.5 ~ 23.0 : 7개
+23.0 ~ 26.5 : 8개
+26.5 ~ 30.0 : 6개
+30.0 ~ 33.5 : 6개
+33.5 ~ 37.0 : 3개
+
+
+count, bins, container = plt.hist(pairs_mod['best_lag'], bins=6, edgecolor='k', rwidth=.9) 
+print('count :', count) 
+print('bins :', bins)   
+print('container :', container)
+
+
+for i in range(len(bins)-1):
+    print(f'{bins[i]} ~ {bins[i+1]} : {int(count[i])}개')
+
+plt.xlabel('best_lag')
+plt.ylabel('Count')
+plt.grid(axis='y')
+
+plt.title("best_lag 분포 히스토그램")
+plt.show()
+count : [214. 248. 229. 232. 230. 272.]
+bins : [1.         1.83333333 2.66666667 3.5        4.33333333 5.16666667
+ 6.        ]
+container : <BarContainer object of 6 artists>
+1.0 ~ 1.8333333333333335 : 214개
+1.8333333333333335 ~ 2.666666666666667 : 248개
+2.666666666666667 ~ 3.5 : 229개
+3.5 ~ 4.333333333333334 : 232개
+4.333333333333334 ~ 5.166666666666667 : 230개
+5.166666666666667 ~ 6.0 : 272개
+
+
+count, bins, container = plt.hist(pairs_mod['max_corr'], bins=20, edgecolor='k', rwidth=.9) 
+print('count :', count) 
+print('bins :', bins)  
+print('container :', container) 
+
+
+plt.xlabel('max_corr')
+plt.ylabel('Count')
+plt.title("max_corr 분포 히스토그램")
+plt.show()
+count : [  6.  41. 116. 169.   0.   0.   0.   0.   0.   0.   0.   0.   0. 299.
+ 412. 204. 107.  52.  13.   6.]
+bins : [-0.70833733 -0.62648981 -0.54464228 -0.46279476 -0.38094723 -0.29909971
+ -0.21725218 -0.13540466 -0.05355713  0.02829039  0.11013792  0.19198544
+  0.27383296  0.35568049  0.43752801  0.51937554  0.60122306  0.68307059
+  0.76491811  0.84676564  0.92861316]
+container : <BarContainer object of 20 artists>

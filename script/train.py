@@ -20,6 +20,15 @@ warnings.filterwarnings('ignore')
 sys.path.append(os.path.join(os.path.dirname(__file__), '../document'))
 from evaluation import comovement_score, comovement_f1, comovement_nmae
 
+SEQ_CAT_TO_NUM = {'seq_cnt_low': 0, 'seq_cnt_mid': 1, 'seq_cnt_high': 2}
+DEFAULT_STATS = {
+    'mean': 0.0,
+    'std': 0.0,
+    'cv': 0.0,
+    'zero_ratio': 1.0,
+    'nonzero_count': 0,
+}
+
 
 def safe_corr(x, y):
     """안전한 상관계수 계산 (표준편차가 0인 경우 처리)"""
@@ -51,6 +60,37 @@ def compute_item_statistics(pivot):
         }
     
     return item_stats
+
+
+def prepare_item_metadata(train, pivot):
+    """
+    아이템 단위 부가 정보 생성:
+    - hs4 코드 (최빈값)
+    - seq_total 기반 범주 (EDA에서 사용한 cut 포맷 그대로)
+    - value 시계열 통계치
+    """
+    item_stats = compute_item_statistics(pivot)
+    
+    # hs4 최빈값 추출
+    item_hs4 = (
+        train.groupby('item_id')['hs4']
+        .agg(lambda x: x.mode(dropna=True)[0] if len(x.mode(dropna=True)) > 0 else x.iloc[0])
+        .to_dict()
+    )
+    
+    # seq 총량 기반 범주화 (EDA 결과와 동일하게 40/80 기준)
+    seq_total = train.groupby('item_id').size()
+    seq_bins = [-np.inf, 40, 80, np.inf]
+    seq_labels = ['seq_cnt_low', 'seq_cnt_mid', 'seq_cnt_high']
+    seq_cat_series = pd.cut(seq_total, bins=seq_bins, labels=seq_labels, right=True)
+    seq_cat_map = seq_cat_series.to_dict()
+    
+    return {
+        'stats': item_stats,
+        'hs4': item_hs4,
+        'seq_cat': seq_cat_map,
+        'seq_total': seq_total.to_dict(),
+    }
 
 
 def find_comovement_pairs(pivot, max_lag=6, min_nonzero=12, corr_threshold=0.35):
@@ -169,7 +209,7 @@ def find_comovement_pairs(pivot, max_lag=6, min_nonzero=12, corr_threshold=0.35)
     return pairs
 
 
-def build_training_data(pivot, pairs, end_month_idx=None):
+def build_training_data(pivot, pairs, metadata, end_month_idx=None):
     """
     공행성쌍 + 시계열을 이용해 (X, y) 학습 데이터를 만드는 함수
     향상된 feature engineering:
@@ -188,6 +228,9 @@ def build_training_data(pivot, pairs, end_month_idx=None):
     """
     months = pivot.columns.to_list()
     n_months = len(months)
+    item_stats = metadata['stats']
+    item_hs4 = metadata['hs4']
+    seq_cat_map = metadata['seq_cat']
     
     # end_month_idx가 지정되면 그 이전까지만 사용 (검증 모드)
     if end_month_idx is not None:
@@ -235,6 +278,12 @@ def build_training_data(pivot, pairs, end_month_idx=None):
             else:
                 b_change = 0.0
 
+            a_stat = item_stats.get(leader, DEFAULT_STATS)
+            b_stat = item_stats.get(follower, DEFAULT_STATS)
+            same_hs4 = 1 if item_hs4.get(leader) == item_hs4.get(follower) else 0
+            seq_cat_label = seq_cat_map.get(follower, 'seq_cnt_mid')
+            seq_cat_code = SEQ_CAT_TO_NUM.get(seq_cat_label, 1)
+
             rows.append({
                 "b_t": b_t,
                 "b_t_1": b_t_1,
@@ -245,6 +294,14 @@ def build_training_data(pivot, pairs, end_month_idx=None):
                 "a_trend": a_trend,
                 "b_ma3": b_ma3,
                 "b_change": b_change,
+                "a_zero_ratio": a_stat['zero_ratio'],
+                "b_zero_ratio": b_stat['zero_ratio'],
+                "a_cv": a_stat['cv'],
+                "b_cv": b_stat['cv'],
+                "same_hs4": same_hs4,
+                "b_seq_cat": seq_cat_code,
+                "a_mean": a_stat['mean'],
+                "b_mean": b_stat['mean'],
                 "target": b_t_plus_1,
             })
 
@@ -252,7 +309,7 @@ def build_training_data(pivot, pairs, end_month_idx=None):
     return df_train
 
 
-def predict(pivot, pairs, reg, feature_cols, predict_month_idx=None):
+def predict(pivot, pairs, reg, feature_cols, metadata, predict_month_idx=None):
     """
     회귀 모델 추론 및 제출 파일 생성
     탐색된 공행성 쌍에 대해 후행 품목의 다음 달 총 무역량 예측
@@ -266,6 +323,9 @@ def predict(pivot, pairs, reg, feature_cols, predict_month_idx=None):
     """
     months = pivot.columns.to_list()
     n_months = len(months)
+    item_stats = metadata['stats']
+    item_hs4 = metadata['hs4']
+    seq_cat_map = metadata['seq_cat']
     
     # predict_month_idx가 지정되면 해당 월을 예측 (검증 모드)
     if predict_month_idx is not None:
@@ -318,6 +378,12 @@ def predict(pivot, pairs, reg, feature_cols, predict_month_idx=None):
         else:
             b_change = 0.0
 
+        a_stat = item_stats.get(leader, DEFAULT_STATS)
+        b_stat = item_stats.get(follower, DEFAULT_STATS)
+        same_hs4 = 1 if item_hs4.get(leader) == item_hs4.get(follower) else 0
+        seq_cat_label = seq_cat_map.get(follower, 'seq_cnt_mid')
+        seq_cat_code = SEQ_CAT_TO_NUM.get(seq_cat_label, 1)
+
         # Feature 벡터 구성
         features = {
             "b_t": b_t,
@@ -329,6 +395,14 @@ def predict(pivot, pairs, reg, feature_cols, predict_month_idx=None):
             "a_trend": a_trend,
             "b_ma3": b_ma3,
             "b_change": b_change,
+            "a_zero_ratio": a_stat['zero_ratio'],
+            "b_zero_ratio": b_stat['zero_ratio'],
+            "a_cv": a_stat['cv'],
+            "b_cv": b_stat['cv'],
+            "same_hs4": same_hs4,
+            "b_seq_cat": seq_cat_code,
+            "a_mean": a_stat['mean'],
+            "b_mean": b_stat['mean'],
         }
 
         X_test = np.array([[features[col] for col in feature_cols]])
@@ -357,9 +431,9 @@ def predict(pivot, pairs, reg, feature_cols, predict_month_idx=None):
     return df_pred
 
 
-def cross_validate_with_kfold(pivot, pairs, feature_cols, is_validate_mode=False, 
-                               answer_df=None, n_splits=5, seeds=[42, 1031, 106],
-                               model_weights=None):
+def cross_validate_with_kfold(pivot, pairs, feature_cols, metadata,
+                               is_validate_mode=False, answer_df=None, n_splits=5,
+                               seeds=[42, 1031, 106], model_weights=None):
     """
     KFold 교차 검증을 수행하고 모든 fold의 예측을 앙상블하는 함수
     XGBoost, LightGBM, CatBoost 세 가지 모델을 모두 사용하여 앙상블
@@ -381,7 +455,7 @@ def cross_validate_with_kfold(pivot, pairs, feature_cols, is_validate_mode=False
     """
     # 학습 데이터 생성
     print("\n[KFold] 학습 데이터 생성 중...")
-    df_train_model = build_training_data(pivot, pairs)
+    df_train_model = build_training_data(pivot, pairs, metadata)
     print(f'생성된 학습 데이터 shape: {df_train_model.shape}')
     
     if len(df_train_model) == 0:
@@ -482,7 +556,7 @@ def cross_validate_with_kfold(pivot, pairs, feature_cols, is_validate_mode=False
                 reg.fit(X_train_fold, y_train_fold_log)
                 
                 # 전체 pairs에 대해 예측 (실제 제출 형식)
-                fold_submission = predict(pivot, pairs, reg, feature_cols)
+                fold_submission = predict(pivot, pairs, reg, feature_cols, metadata)
                 
                 # 예측 결과를 모델별로 딕셔너리에 누적
                 if model_name not in model_predictions:
@@ -622,6 +696,9 @@ def main():
     print("\n[1단계] 데이터 로드 중...")
     train = pd.read_csv('../data/train.csv')
     print(f"학습 데이터 shape: {train.shape}")
+    train['ym'] = pd.to_datetime(
+        train['year'].astype(str) + "-" + train['month'].astype(str).str.zfill(2)
+    )
 
     # 2. 데이터 전처리
     print("\n[2단계] 데이터 전처리 중...")
@@ -669,10 +746,15 @@ def main():
         
         # 검증 기간의 첫 번째 달이 예측 대상
         predict_month_idx = split_idx  # 검증 기간의 첫 번째 달 인덱스
+        train_for_metadata = train[train['ym'] <= train_months[-1]].copy()
     else:
         pivot_train = pivot.copy()
         pivot_for_answer = None
         predict_month_idx = None
+        train_for_metadata = train.copy()
+
+    print("\n[2.5단계] 아이템 메타데이터 생성 중...")
+    metadata = prepare_item_metadata(train_for_metadata, pivot_train)
 
     # 3. 공행성쌍 탐색
     print("\n[3단계] 공행성 쌍 탐색 중...")
@@ -701,10 +783,12 @@ def main():
         return
 
     # 4. Feature 컬럼 정의
-    # 분석 결과: 기존 9개 피처가 가장 좋은 성능을 보임
-    # 새로운 피처들은 높은 상관관계(중복) 또는 낮은 중요도로 인해 성능 하락
-    feature_cols = ['b_t', 'b_t_1', 'a_t_lag', 'max_corr', 'best_lag', 
-                    'b_trend', 'a_trend', 'b_ma3', 'b_change']
+    feature_cols = [
+        'b_t', 'b_t_1', 'a_t_lag', 'max_corr', 'best_lag',
+        'b_trend', 'a_trend', 'b_ma3', 'b_change',
+        'a_zero_ratio', 'b_zero_ratio', 'a_cv', 'b_cv',
+        'same_hs4', 'b_seq_cat', 'a_mean', 'b_mean'
+    ]
 
     # 5. KFold 교차 검증 수행
     print("\n[5단계] KFold 교차 검증 수행 중...")
@@ -730,7 +814,7 @@ def main():
         
         # KFold 교차 검증 수행 (학습 데이터만 사용)
         submission, fold_scores = cross_validate_with_kfold(
-            pivot_train, pairs, feature_cols, 
+            pivot_train, pairs, feature_cols, metadata,
             is_validate_mode=True, answer_df=answer_df, n_splits=5
         )
         
@@ -787,7 +871,7 @@ def main():
     else:
         # 제출 모드: 전체 데이터로 KFold 교차 검증 수행
         submission, _ = cross_validate_with_kfold(
-            pivot_train, pairs, feature_cols, 
+            pivot_train, pairs, feature_cols, metadata,
             is_validate_mode=False, answer_df=None, n_splits=5
         )
         print(f"\n예측된 쌍 수: {len(submission)}")
