@@ -29,6 +29,73 @@ DEFAULT_STATS = {
     'nonzero_count': 0,
 }
 
+# HS2 코드 한글 카테고리 매핑 (전체)
+HS2_CATEGORY_MAP = {
+    1: "산동물", 2: "육과 식용설육", 3: "어패류", 4: "낙농품·조란·천연동물성 식품",
+    5: "기타 동물성 생산품", 6: "산수목·꽃", 7: "채소", 8: "과실·견과류",
+    9: "커피·향신료", 10: "곡물", 11: "제분업 제품", 12: "유지종자·과실·곡물·식물",
+    13: "검·수지·기타 식물성 채취액", 14: "식물성 편조재료", 15: "동식물성 유지",
+    16: "육류·어류·갑각류·연체동물류의 조제품", 17: "당류 및 당과류", 18: "코코아 및 코코아 제조품",
+    19: "곡물·전분·우유의 조제품", 20: "채소·과실·견과류의 조제품", 21: "기타 식료품",
+    22: "음료·주류·식초", 23: "사료용 잔재물 및 폐기물", 24: "담배 및 담배 대용품",
+    25: "염·황·토석·석고·석회 및 시멘트", 26: "광석·슬래그 및 재", 27: "연료·광유 및 증류품",
+    28: "무기화학품", 29: "유기화학품", 30: "의약품", 31: "비료",
+    32: "염료·안료 및 기타 착색제", 33: "정유 및 향료제", 34: "비누·세제·왁스·광택제",
+    35: "단백질류·변성전분·접착제", 36: "화약류", 37: "사진용·영화용 재료", 38: "기타 화학제품",
+    39: "플라스틱 및 그 제품", 40: "고무 및 그 제품", 41: "원피(원피·가공피)", 42: "가죽제품",
+    43: "모피 및 인조모피", 44: "목재 및 목제품", 45: "코르크 및 그 제품", 46: "짚·왕겨·버들·대나무 제품",
+    47: "펄프·종이·판지", 48: "종이·판지 및 그 제품", 49: "인쇄물·서적·신문·그림",
+    50: "견사", 51: "양모·동물털", 52: "면사", 53: "기타 식물섬유",
+    54: "화학섬유장", 55: "화학섬유단", 56: "솜·펠트·부직포", 57: "융단류",
+    58: "특수직물", 59: "함침·도포·피복 직물", 60: "편직물", 61: "의류 및 의류부속품(편직물)",
+    62: "의류 및 의류부속품(편직물 이외)", 63: "기타 제직직물제품", 64: "신발류", 65: "모자류",
+    66: "우산·지팡이·채찍", 67: "가공깃털·인조꽃", 68: "석재·석고·시멘트·석면제품", 69: "도자제품",
+    70: "유리 및 유리제품", 71: "진주·보석·귀금속", 72: "철강", 73: "철강제품",
+    74: "구리 및 그 제품", 75: "니켈 및 그 제품", 76: "알루미늄 및 그 제품", 78: "납 및 그 제품",
+    79: "아연 및 그 제품", 80: "주석 및 그 제품", 81: "기타 비철금속", 82: "금속공구·식기류",
+    83: "기타 금속제품", 84: "원자로·보일러·기계류", 85: "전기기기", 86: "철도차량",
+    87: "철도·도로 외의 차량", 88: "항공기", 89: "선박", 90: "정밀기기",
+    91: "시계", 92: "악기", 93: "무기류", 94: "가구",
+    95: "장난감·운동용품", 96: "기타 제조품", 97: "예술품·골동품", 98: "특별거래품목", 99: "미분류"
+}
+
+
+def get_category_group(hs2_code):
+    """
+    HS2 코드를 대분류 카테고리 그룹으로 변환
+    의미론적으로 유사한 카테고리를 묶어서 공행성 패턴 학습에 활용
+    """
+    if 1 <= hs2_code <= 24:
+        return 1  # 농수산품
+    elif 25 <= hs2_code <= 27:
+        return 2  # 광물/연료
+    elif 28 <= hs2_code <= 38:
+        return 3  # 화학품
+    elif 39 <= hs2_code <= 40:
+        return 4  # 플라스틱/고무
+    elif 41 <= hs2_code <= 43:
+        return 5  # 가죽/모피
+    elif 44 <= hs2_code <= 49:
+        return 6  # 목재/종이
+    elif 50 <= hs2_code <= 63:
+        return 7  # 섬유
+    elif 64 <= hs2_code <= 67:
+        return 8  # 신발/모자
+    elif 68 <= hs2_code <= 70:
+        return 9  # 석재/도자/유리
+    elif hs2_code == 71:
+        return 10  # 귀금속
+    elif 72 <= hs2_code <= 83:
+        return 11  # 금속
+    elif 84 <= hs2_code <= 85:
+        return 12  # 기계/전기
+    elif 86 <= hs2_code <= 89:
+        return 13  # 운송장비
+    elif 90 <= hs2_code <= 92:
+        return 14  # 정밀기기
+    else:
+        return 15  # 기타
+
 
 def safe_corr(x, y):
     """안전한 상관계수 계산 (표준편차가 0인 경우 처리)"""
@@ -83,6 +150,9 @@ def prepare_item_metadata(train, pivot):
     item_hs2 = {item: hs4 // 100 for item, hs4 in item_hs4.items()}
     item_hs3 = {item: hs4 // 10 for item, hs4 in item_hs4.items()}
     
+    # 카테고리 그룹 추출 (hs2 기반)
+    item_category_group = {item: get_category_group(hs2) for item, hs2 in item_hs2.items()}
+    
     # seq 총량 기반 범주화 (EDA 결과와 동일하게 40/80 기준)
     seq_total = train.groupby('item_id').size()
     seq_bins = [-np.inf, 40, 80, np.inf]
@@ -95,8 +165,43 @@ def prepare_item_metadata(train, pivot):
         'hs4': item_hs4,
         'hs2': item_hs2,
         'hs3': item_hs3,
+        'category_group': item_category_group,
         'seq_cat': seq_cat_map,
         'seq_total': seq_total.to_dict(),
+    }
+
+
+def compute_hs2_pair_stats(pairs_df, metadata):
+    """
+    공행성 쌍 데이터프레임에서 HS2 쌍 통계 계산 (Count Encoding)
+    - hs2_pair_count: (hs2_a, hs2_b) 쌍의 빈도
+    - hs2_a_as_leader: hs2_a가 선행으로 나타난 횟수
+    - hs2_b_as_follower: hs2_b가 후행으로 나타난 횟수
+    """
+    from collections import Counter
+    
+    hs2_pair_counter = Counter()
+    hs2_leader_counter = Counter()
+    hs2_follower_counter = Counter()
+    
+    for _, row in pairs_df.iterrows():
+        leader_id = row['leading_item_id']
+        follower_id = row['following_item_id']
+        
+        hs2_a = metadata['hs2'].get(leader_id, 0)
+        hs2_b = metadata['hs2'].get(follower_id, 0)
+        
+        hs2_pair_counter[(hs2_a, hs2_b)] += 1
+        hs2_leader_counter[hs2_a] += 1
+        hs2_follower_counter[hs2_b] += 1
+    
+    total_pairs = len(pairs_df)
+    
+    return {
+        'pair_count': dict(hs2_pair_counter),
+        'leader_count': dict(hs2_leader_counter),
+        'follower_count': dict(hs2_follower_counter),
+        'total_pairs': total_pairs,
     }
 
 
@@ -239,11 +344,15 @@ def build_training_data(pivot, pairs, metadata, end_month_idx=None):
     item_hs4 = metadata['hs4']
     item_hs2 = metadata['hs2']
     item_hs3 = metadata['hs3']
+    item_category_group = metadata['category_group']
     seq_cat_map = metadata['seq_cat']
     
     # end_month_idx가 지정되면 그 이전까지만 사용 (검증 모드)
     if end_month_idx is not None:
         n_months = min(n_months, end_month_idx)
+    
+    # HS2 쌍 통계 계산 (Count Encoding)
+    hs2_stats = compute_hs2_pair_stats(pairs, metadata)
 
     rows = []
 
@@ -290,14 +399,27 @@ def build_training_data(pivot, pairs, metadata, end_month_idx=None):
             a_stat = item_stats.get(leader, DEFAULT_STATS)
             b_stat = item_stats.get(follower, DEFAULT_STATS)
             
-            # HS 코드 관련 피처 (핵심만 유지)
+            # HS 코드 관련 피처
+            hs2_a = item_hs2.get(leader, 0)
+            hs2_b = item_hs2.get(follower, 0)
             same_hs4 = 1 if item_hs4.get(leader) == item_hs4.get(follower) else 0
-            same_hs2 = 1 if item_hs2.get(leader) == item_hs2.get(follower) else 0
+            same_hs2 = 1 if hs2_a == hs2_b else 0
+            
+            # 카테고리 그룹 기반 피처 (핵심 추가)
+            cat_group_a = item_category_group.get(leader, 15)
+            cat_group_b = item_category_group.get(follower, 15)
+            same_category_group = 1 if cat_group_a == cat_group_b else 0
+            category_pair_code = cat_group_a * 100 + cat_group_b  # 예: 311 = 화학품→금속
+            
+            # HS2 쌍 통계 (Count Encoding)
+            hs2_pair_count = hs2_stats['pair_count'].get((hs2_a, hs2_b), 0)
+            hs2_a_popularity = hs2_stats['leader_count'].get(hs2_a, 0) / max(1, hs2_stats['total_pairs'])
+            hs2_b_popularity = hs2_stats['follower_count'].get(hs2_b, 0) / max(1, hs2_stats['total_pairs'])
             
             seq_cat_label = seq_cat_map.get(follower, 'seq_cnt_mid')
             seq_cat_code = SEQ_CAT_TO_NUM.get(seq_cat_label, 1)
             
-            # 상관계수와 lag의 상호작용 피처 (핵심만 유지)
+            # 상관계수와 lag의 상호작용 피처
             lag_x_corr = lag * abs(corr)
             corr_abs = abs(corr)
 
@@ -322,6 +444,12 @@ def build_training_data(pivot, pairs, metadata, end_month_idx=None):
                 "b_seq_cat": seq_cat_code,
                 "a_mean": a_stat['mean'],
                 "b_mean": b_stat['mean'],
+                # 카테고리 기반 특징 (5개 추가)
+                "same_category_group": same_category_group,
+                "category_pair_code": category_pair_code,
+                "hs2_pair_count": hs2_pair_count,
+                "hs2_a_popularity": hs2_a_popularity,
+                "hs2_b_popularity": hs2_b_popularity,
                 "target": b_t_plus_1,
             })
 
@@ -347,7 +475,11 @@ def predict(pivot, pairs, reg, feature_cols, metadata, predict_month_idx=None):
     item_hs4 = metadata['hs4']
     item_hs2 = metadata['hs2']
     item_hs3 = metadata['hs3']
+    item_category_group = metadata['category_group']
     seq_cat_map = metadata['seq_cat']
+    
+    # HS2 쌍 통계 계산 (Count Encoding)
+    hs2_stats = compute_hs2_pair_stats(pairs, metadata)
     
     # predict_month_idx가 지정되면 해당 월을 예측 (검증 모드)
     if predict_month_idx is not None:
@@ -403,18 +535,31 @@ def predict(pivot, pairs, reg, feature_cols, metadata, predict_month_idx=None):
         a_stat = item_stats.get(leader, DEFAULT_STATS)
         b_stat = item_stats.get(follower, DEFAULT_STATS)
         
-        # HS 코드 관련 피처 (핵심만 유지)
+        # HS 코드 관련 피처
+        hs2_a = item_hs2.get(leader, 0)
+        hs2_b = item_hs2.get(follower, 0)
         same_hs4 = 1 if item_hs4.get(leader) == item_hs4.get(follower) else 0
-        same_hs2 = 1 if item_hs2.get(leader) == item_hs2.get(follower) else 0
+        same_hs2 = 1 if hs2_a == hs2_b else 0
+        
+        # 카테고리 그룹 기반 피처 (핵심 추가)
+        cat_group_a = item_category_group.get(leader, 15)
+        cat_group_b = item_category_group.get(follower, 15)
+        same_category_group = 1 if cat_group_a == cat_group_b else 0
+        category_pair_code = cat_group_a * 100 + cat_group_b
+        
+        # HS2 쌍 통계 (Count Encoding)
+        hs2_pair_count = hs2_stats['pair_count'].get((hs2_a, hs2_b), 0)
+        hs2_a_popularity = hs2_stats['leader_count'].get(hs2_a, 0) / max(1, hs2_stats['total_pairs'])
+        hs2_b_popularity = hs2_stats['follower_count'].get(hs2_b, 0) / max(1, hs2_stats['total_pairs'])
         
         seq_cat_label = seq_cat_map.get(follower, 'seq_cnt_mid')
         seq_cat_code = SEQ_CAT_TO_NUM.get(seq_cat_label, 1)
         
-        # 상관계수와 lag의 상호작용 피처 (핵심만 유지)
+        # 상관계수와 lag의 상호작용 피처
         lag_x_corr = lag * abs(corr)
         corr_abs = abs(corr)
 
-        # Feature 벡터 구성 (핵심 피처만)
+        # Feature 벡터 구성 (카테고리 특징 포함)
         features = {
             "b_t": b_t,
             "b_t_1": b_t_1,
@@ -436,6 +581,12 @@ def predict(pivot, pairs, reg, feature_cols, metadata, predict_month_idx=None):
             "b_seq_cat": seq_cat_code,
             "a_mean": a_stat['mean'],
             "b_mean": b_stat['mean'],
+            # 카테고리 기반 특징 (5개 추가)
+            "same_category_group": same_category_group,
+            "category_pair_code": category_pair_code,
+            "hs2_pair_count": hs2_pair_count,
+            "hs2_a_popularity": hs2_a_popularity,
+            "hs2_b_popularity": hs2_b_popularity,
         }
 
         X_test = np.array([[features[col] for col in feature_cols]])
@@ -828,7 +979,7 @@ def main():
         print("경고: 공행성 쌍이 발견되지 않았습니다.")
         return
 
-    # 4. Feature 컬럼 정의 (과적합 방지를 위한 핵심 피처만 선택)
+    # 4. Feature 컬럼 정의 (카테고리 기반 특징 추가)
     # 중요도가 높고 일반화 성능이 좋은 피처만 유지
     feature_cols = [
         'b_t', 'b_t_1', 'a_t_lag', 'max_corr', 'best_lag',
@@ -836,7 +987,10 @@ def main():
         'a_zero_ratio', 'b_zero_ratio', 'a_cv', 'b_cv',  # 통계 피처
         'same_hs4', 'same_hs2',  # HS 코드 피처 (핵심만)
         'lag_x_corr', 'corr_abs',  # 상관계수 상호작용 (핵심만)
-        'b_seq_cat', 'a_mean', 'b_mean'  # 메타데이터
+        'b_seq_cat', 'a_mean', 'b_mean',  # 메타데이터
+        # 카테고리 기반 특징 (5개 추가) - 19 → 24개
+        'same_category_group', 'category_pair_code', 'hs2_pair_count',
+        'hs2_a_popularity', 'hs2_b_popularity'
     ]
 
     # 5. KFold 교차 검증 수행
